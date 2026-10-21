@@ -1,0 +1,27 @@
+# Temporary: find a 64-bit dedicated server build for the self-test.
+name: probe-srcds
+on:
+  push:
+    paths: ['.github/workflows/probe-srcds.yml']
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          sudo dpkg --add-architecture i386 && sudo apt-get update -qq && sudo apt-get install -y -qq lib32gcc-s1 lib32stdc++6 > /dev/null
+          mkdir -p ~/steamcmd && cd ~/steamcmd
+          curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar xz
+          ./steamcmd.sh +login anonymous +quit > /dev/null || true
+          for app in 244310 232370; do
+            echo "===== app_info $app"
+            ./steamcmd.sh +login anonymous +app_info_update 1 +app_info_print $app +quit | sed -n '/"branches"/,/^\t\t}/p' | head -60
+          done
+          for app in 244310 232370; do
+            echo "===== install $app"
+            ./steamcmd.sh +force_install_dir "$HOME/s$app" +login anonymous +app_update $app +quit | tail -2
+            ls -la "$HOME/s$app"
+            ls "$HOME/s$app/bin" | head -40
+            ls "$HOME/s$app/bin/linux64" 2>/dev/null | head -40
+            file "$HOME/s$app"/srcds_* "$HOME/s$app"/bin/linux64/srcds* 2>/dev/null
+            cat "$HOME/s$app"/srcds_run* 2>/dev/null | grep -n "linux64\|64" | head -10
+          done
