@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1 — 2026-10-21
+
+### Fixed
+- Blue portal (M1) never fired, and R never closed portals. The gun has no ammo type, and the stock
+  `CBaseCombatWeapon::ItemPostFrame` sends primary fire on a no-ammo, no-clip weapon to `HandleFireOnEmpty()` and
+  only reloads clip weapons. Secondary has no ammo check, which is why orange worked. The gun now has its own
+  `ItemPostFrame` (as the gravity gun does). Found in the first play-test.
+
 ## 0.3.0 — 2026-10-21
 
 ### Added
