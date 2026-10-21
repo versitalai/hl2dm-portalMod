@@ -30,6 +30,8 @@ fi
 for lib in tier0 vstdlib; do
     [[ -e "$SRCDS/bin/linux64/lib$lib.so" ]] || ln -s "lib${lib}_srv.so" "$SRCDS/bin/linux64/lib$lib.so"
 done
+# The 64-bit dedicated server loads the game DLL as server_srv.so.
+[[ -e "$SRCDS/hl2dm_portal/bin/linux64/server_srv.so" ]] || ln -s server.so "$SRCDS/hl2dm_portal/bin/linux64/server_srv.so"
 # 64-bit steamclient.so from steamcmd, where the engine looks for it.
 if [[ ! -f "$HOME/.steam/sdk64/steamclient.so" && -f "$HOME/steamcmd/linux64/steamclient.so" ]]; then
     mkdir -p "$HOME/.steam/sdk64"
