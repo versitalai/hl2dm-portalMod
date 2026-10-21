@@ -9,19 +9,22 @@
 # Exit code 0 only if every PORTALTEST passed.
 set -uo pipefail
 
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRCDS="$(cd "$1" && pwd)"
 MAP="${2:-dm_lockdown}"
 LOG="$SRCDS/portal_selftest.log"
 
 cd "$SRCDS"
-LAUNCHER=""
-for l in srcds_run_64 srcds_run; do
-    [[ -x "$SRCDS/$l" ]] && { LAUNCHER="$l"; break; }
-done
-[[ -n "$LAUNCHER" ]] || { echo "error: no srcds launcher in $SRCDS"; ls "$SRCDS"; exit 1; }
 
-echo ">> $LAUNCHER -game hl2dm_portal +map $MAP"
-timeout 300 "./$LAUNCHER" -game hl2dm_portal -console -norestart -nobreakpad \
+# The 2013 dedicated server has 64-bit engine libraries but only a 32-bit
+# launcher, so use our own 64-bit one (tests/srcds64.c).
+if [[ ! -x "$SRCDS/srcds64" ]]; then
+    cc -O2 -o "$SRCDS/srcds64" "$REPO_ROOT/tests/srcds64.c" -ldl || exit 1
+fi
+export LD_LIBRARY_PATH="$SRCDS/bin/linux64:$SRCDS/bin${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+echo ">> srcds64 -game hl2dm_portal +map $MAP"
+timeout 300 ./srcds64 -game hl2dm_portal -console -norestart -nobreakpad -insecure \
     +sv_lan 1 +maxplayers 4 +sv_portal_selftest 1 +path +map "$MAP" > "$LOG" 2>&1
 echo ">> server exited ($?)"
 
