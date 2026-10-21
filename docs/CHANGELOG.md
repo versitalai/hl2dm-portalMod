@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — 2026-10-21
+
+### Added
+- Ready-to-play release zip: `hl2dm_portal/` sourcemod folder (sourcemods `gameinfo.txt`, stripped binaries),
+  `install.sh` (Linux: native/Flatpak Steam auto-detect) and `install.bat` (Windows: Steam path from registry).
+- `scripts/package.sh` (builds the zip), `scripts/install.sh` (source → installed in one command).
+- GitHub Actions: Linux build in the Steam Runtime sniper container, Windows MSVC build, packaged zip artifact on
+  every push, Release on `v*` tags.
+
+### Verified
+- Package + installer tested against a fake Steam tree (auto-detect, reinstall, missing Steam, missing SDK Base).
+- Sourcemods layout follows the SDK's own `gameinfo.txt`; Valve's distribution docs weren't reachable from the
+  build box and it hasn't been launched in Steam yet.
+
 ## 0.2.0 — 2026-10-21
 
 ### Added

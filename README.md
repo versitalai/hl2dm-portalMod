@@ -5,6 +5,18 @@ Portal gun for Half-Life 2: Deathmatch, built on Valve's
 Every player spawns with a portal gun. Shoot a blue and an orange portal on any world surface.
 Anything that moves goes through them. You see through them live.
 
+## Install (players)
+
+1. Install **Source SDK Base 2013 Multiplayer** from Steam (free): `steam://install/243750`
+2. Download `hl2dm_portal-<version>.zip` from [Releases](https://github.com/versitalai/hl2dm-portalmod/releases)
+   (or the `hl2dm_portal` artifact of the latest [build](https://github.com/versitalai/hl2dm-portalmod/actions) run) and unzip it.
+3. **Windows:** double-click `install.bat`. **Linux:** `./install.sh`
+   (finds native and Flatpak Steam; `--steam-dir DIR` otherwise). Or copy the `hl2dm_portal` folder into
+   `Steam/steamapps/sourcemods/` yourself.
+4. Restart Steam, launch **HL2DM Portal** from your Library.
+
+From source on Linux, one command does it all (fetch SDK, build, package, install): `scripts/install.sh`
+
 ## What goes through
 
 | Thing | How |
@@ -62,25 +74,19 @@ The gun is in weapon slot 1 (with crowbar / gravity gun). Portals are removed wh
 The repo holds only the mod. `scripts/setup.sh` fetches the SDK at the pinned commit (`SDK_COMMIT`), applies
 `patches/hl2dm-portalmod.patch` (edits to stock SDK files) and copies `overlay/` (new files).
 
-### Linux
+| Script | Does |
+|---|---|
+| `scripts/install.sh` | Linux, all-in-one: setup → build → package → install into Steam |
+| `scripts/setup.sh [dir]` | Fetch SDK into `./sdk` and apply the mod |
+| `scripts/build_linux.sh [dir]` | Native build with host gcc (no podman), → `sdk/game/mod_hl2mp/bin/linux64/` |
+| `scripts/package.sh [dir] [version]` | Ready-to-play folder + `dist/hl2dm_portal-<version>.zip` (debug info stripped) |
 
-```bash
-scripts/setup.sh            # -> ./sdk
-scripts/build_linux.sh      # -> sdk/game/mod_hl2mp/bin/linux64/{server,client}.so
-```
+Windows: run `scripts/setup.sh` from Git Bash, then `sdk\src\createallprojects.bat`, open `everything.sln` in
+Visual Studio 2022 and build (DLLs land in `sdk\game\mod_hl2mp\bin\x64`).
 
-`build_linux.sh` builds natively with the host gcc (no podman). Verified with gcc 13 on Ubuntu 24.04. For binaries you
-distribute, use the SDK's own `sdk/src/buildallprojects`, which builds inside the Steam Runtime container.
-
-### Windows
-
-Run `scripts/setup.sh` from Git Bash, then follow the SDK's Windows steps: `sdk\src\createallprojects.bat`, open
-`everything.sln` in Visual Studio 2022 and build.
-
-### Run
-
-Needs **Source SDK Base 2013 Multiplayer** (app 243750) installed through Steam. Launch the mod from `sdk/game`
-(`./mod_hl2mp` on Linux, or the `Client (HL2MP)` project in Visual Studio).
+**CI** (`.github/workflows/build.yml`) builds Linux inside the Steam Runtime "sniper" container (what Valve requires
+for distributed Linux binaries) and Windows with MSVC, then packages both into one zip. Every push uploads it as an
+artifact; pushing a `v*` tag publishes a Release.
 
 ## Working on the code
 
