@@ -33,5 +33,15 @@ jobs:
           cp bin-linux64/*.so sdk/game/mod_hl2mp/bin/linux64/
           scripts/package.sh sdk probe
           cp -r dist/stage/hl2dm_portal "$HOME/srcds/"
+      - name: Isolate - stock HL2DM with the same launcher
+        continue-on-error: true
+        run: |
+          ls ~/steamcmd/linux64 ~/.steam/sdk64 2>&1 | head
+          cd "$HOME/srcds"
+          [[ -x srcds64 ]] || cc -O2 -o srcds64 "$GITHUB_WORKSPACE/tests/srcds64.c" -ldl
+          cp -n "$GITHUB_WORKSPACE/sdk/game/bin/linux64/libsteam_api.so" bin/linux64/ || true
+          mkdir -p ~/.steam/sdk64 && cp -n ~/steamcmd/linux64/steamclient.so ~/.steam/sdk64/ || true
+          LD_LIBRARY_PATH="$HOME/srcds/bin/linux64" timeout 40 gdb -batch -ex run -ex bt --args ./srcds64 -game hl2mp -console -condebug -norestart -insecure +sv_lan 1 +map dm_lockdown +quit 2>&1 | tail -40
+          tail -30 hl2mp/console.log || true
       - name: Run self-test
         run: scripts/selftest.sh "$HOME/srcds" || (tail -150 "$HOME/srcds/portal_selftest.log"; exit 1)
