@@ -25,6 +25,11 @@ fi
 if [[ ! -f "$SRCDS/bin/linux64/libsteam_api.so" ]]; then
     cp "$REPO_ROOT/sdk/game/bin/linux64/libsteam_api.so" "$SRCDS/bin/linux64/" || exit 1
 fi
+# Mod server.so links libtier0.so/libvstdlib.so; the dedicated server names
+# its 64-bit copies *_srv.so.
+for lib in tier0 vstdlib; do
+    [[ -e "$SRCDS/bin/linux64/lib$lib.so" ]] || ln -s "lib${lib}_srv.so" "$SRCDS/bin/linux64/lib$lib.so"
+done
 # 64-bit steamclient.so from steamcmd, where the engine looks for it.
 if [[ ! -f "$HOME/.steam/sdk64/steamclient.so" && -f "$HOME/steamcmd/linux64/steamclient.so" ]]; then
     mkdir -p "$HOME/.steam/sdk64"
