@@ -691,7 +691,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..6c68263 100644
+index e54f63d..34f8b4f 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,13 @@
@@ -708,7 +708,7 @@ index e54f63d..6c68263 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +536,112 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +536,116 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -814,6 +814,10 @@ index e54f63d..6c68263 100644
 +	player->SetLocalAngles( angView );
 +	player->pl.v_angle = angView;
 +	player->IncrementInterpolationFrame();
++
++	// Whatever they're holding stays held from the other side.
++	extern void PhysCannon_HolderWentThroughPortal( CBasePlayer *pPlayer, CHL2MPPortal *pPortal );
++	PhysCannon_HolderWentThroughPortal( player, pPortal );
 +#endif
 +}
 +#endif // HL2MP
@@ -841,6 +845,317 @@ index fe50736..b667e34 100644
  private:
  
  	// See if we are pressing use near a ladder "mount" point and if so, latch us onto the ladder
+diff --git a/src/game/shared/hl2mp/weapon_physcannon.cpp b/src/game/shared/hl2mp/weapon_physcannon.cpp
+index 26fdfef..c7d0b0a 100644
+--- a/src/game/shared/hl2mp/weapon_physcannon.cpp
++++ b/src/game/shared/hl2mp/weapon_physcannon.cpp
+@@ -278,6 +278,7 @@ CGrabController::CGrabController( void )
+ 	m_shadow.maxDampSpeed = m_shadow.maxSpeed*2;
+ 	m_shadow.maxDampAngular = m_shadow.maxAngular;
+ 	m_attachedEntity = NULL;
++	m_nPortals = 0;
+ 	m_vecPreferredCarryAngles = vec3_angle;
+ 	m_bHasPreferredCarryAngles = false;
+ }
+@@ -444,6 +445,8 @@ void CGrabController::AttachEntity( CBasePlayer *pPlayer, CBaseEntity *pEntity,
+ 		PhysicsImpactSound( pPlayer, pPhys, CHAN_STATIC, pPhys->GetMaterialIndex(), pPlayer->VPhysicsGetObject()->GetMaterialIndex(), 1.0, 64 );
+ 	}
+ #endif
++	m_nPortals = 0;
++
+ 	Vector position;
+ 	QAngle angles;
+ 	pPhys->GetPosition( &position, &angles );
+@@ -535,8 +538,89 @@ static void ClampPhysicsVelocity( IPhysicsObject *pPhys, float linearLimit, floa
+ 	pPhys->AddVelocity( &vel, &angVel );
+ }
+ 
++bool CGrabController::TransformThroughPortals( Vector *pPosition, QAngle *pAngles, Vector *pDirection ) const
++{
++	for ( int i = 0; i < m_nPortals; i++ )
++	{
++		CHL2MPPortal *pPortal = m_hPortals[i];
++		if ( !pPortal || !pPortal->IsOpen() )
++			return false;
++
++		VMatrix matToLinked = pPortal->MatrixThisToLinked();
++		if ( pPosition )
++		{
++			*pPosition = matToLinked.VMul4x3( *pPosition );
++		}
++		if ( pDirection )
++		{
++			*pDirection = matToLinked.VMul3x3( *pDirection );
++		}
++		if ( pAngles )
++		{
++			VMatrix matAngles, matResult;
++			matAngles.SetupMatrixOrgAngles( vec3_origin, *pAngles );
++			matResult = matToLinked * matAngles;
++			MatrixAngles( matResult.As3x4(), *pAngles );
++		}
++	}
++	return true;
++}
++
++bool CGrabController::OnAttachedWentThroughPortal( CHL2MPPortal *pPortal )
++{
++	// Move the current target with the object, so the controller doesn't pull
++	// it straight back through for a tick before the next UpdateObject.
++	VMatrix matToLinked = pPortal->MatrixThisToLinked();
++	VMatrix matRotation, matResult;
++	matRotation.SetupMatrixOrgAngles( vec3_origin, m_shadow.targetRotation );
++	matResult = matToLinked * matRotation;
++	m_shadow.targetPosition = matToLinked.VMul4x3( m_shadow.targetPosition );
++	MatrixAngles( matResult.As3x4(), m_shadow.targetRotation );
++
++	// Coming back the way it went: one portal fewer in between.
++	if ( m_nPortals > 0 && m_hPortals[m_nPortals - 1] == pPortal->GetLinkedPortal() )
++	{
++		m_nPortals--;
++		return true;
++	}
++
++	if ( m_nPortals >= HL2MP_PORTAL_MAX_RECURSION )
++		return false;
++
++	m_hPortals[m_nPortals++] = pPortal;
++	return true;
++}
++
++bool CGrabController::OnHolderWentThroughPortal( CHL2MPPortal *pPortal )
++{
++	// Holder followed the object through the first portal: one fewer.
++	if ( m_nPortals > 0 && m_hPortals[0] == pPortal )
++	{
++		for ( int i = 1; i < m_nPortals; i++ )
++		{
++			m_hPortals[i - 1] = m_hPortals[i];
++		}
++		m_nPortals--;
++		return true;
++	}
++
++	// Holder went elsewhere: the way back to the object is through the exit.
++	if ( m_nPortals >= HL2MP_PORTAL_MAX_RECURSION )
++		return false;
++
++	for ( int i = m_nPortals; i > 0; i-- )
++	{
++		m_hPortals[i] = m_hPortals[i - 1];
++	}
++	m_hPortals[0] = pPortal->GetLinkedPortal();
++	m_nPortals++;
++	return true;
++}
++
+ void CGrabController::DetachEntity( bool bClearVelocity )
+ {
++	m_nPortals = 0;
++
+ 	CBaseEntity *pEntity = GetAttached();
+ 	if ( pEntity )
+ 	{
+@@ -810,9 +894,11 @@ void CPlayerPickupController::Use( CBaseEntity *pActivator, CBaseEntity *pCaller
+ 		// +ATTACK will throw phys objects
+ 		if ( m_pPlayer->m_nButtons & IN_ATTACK )
+ 		{
+-			Shutdown( true );
+ 			Vector vecLaunch;
+ 			m_pPlayer->EyeVectors( &vecLaunch );
++			// Thrown through the portals it's held through.
++			m_grabController.TransformThroughPortals( NULL, NULL, &vecLaunch );
++			Shutdown( true );
+ 			// JAY: Scale this with mass because some small objects really go flying
+ 			float massFactor = clamp( pPhys->GetMass(), 0.5, 15 );
+ 			massFactor = RemapVal( massFactor, 0.5, 15, 0.5, 4 );
+@@ -878,6 +964,7 @@ BEGIN_NETWORK_TABLE( CWeaponPhysCannon, DT_WeaponPhysCannon )
+ 	RecvPropFloat( RECVINFO( m_attachedAnglesPlayerSpace[2] ) ),
+ 	RecvPropInt( RECVINFO( m_EffectState ) ),
+ 	RecvPropBool( RECVINFO( m_bOpen ) ),
++	RecvPropInt( RECVINFO( m_nHeldPortalCount ) ),
+ #else
+ 	SendPropBool( SENDINFO( m_bActive ) ),
+ 	SendPropEHandle( SENDINFO( m_hAttachedObject ) ),
+@@ -887,6 +974,7 @@ BEGIN_NETWORK_TABLE( CWeaponPhysCannon, DT_WeaponPhysCannon )
+ 	SendPropAngle( SENDINFO_VECTORELEM(m_attachedAnglesPlayerSpace, 2 ), 11 ),
+ 	SendPropInt( SENDINFO( m_EffectState ) ),
+ 	SendPropBool( SENDINFO( m_bOpen ) ),
++	SendPropInt( SENDINFO( m_nHeldPortalCount ), 3, SPROP_UNSIGNED ),
+ #endif
+ END_NETWORK_TABLE()
+ 
+@@ -1453,7 +1541,11 @@ void CWeaponPhysCannon::PrimaryAttack( void )
+ 		CBaseEntity *pHeld = m_grabController.GetAttached();
+ 		Assert( pHeld != NULL );
+ 
+-		if ( pHeld != NULL )
++		// Punted through the portals it's held through (it's within reach
++		// along that path, not in a straight line).
++		m_grabController.TransformThroughPortals( NULL, NULL, &forward );
++
++		if ( pHeld != NULL && m_grabController.GetPortalCount() == 0 )
+ 		{
+ 			float heldDist = ( pHeld->WorldSpaceCenter() - pOwner->WorldSpaceCenter() ).Length();
+ 
+@@ -1977,7 +2069,12 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+ 	AngleMatrix( angles, attachedToWorld );
+ 	VectorRotate( m_attachedPositionObjectSpace, attachedToWorld, offset );
+ 
+-	SetTargetPosition( end - offset, angles );
++	// Held through a portal: the target is on the object's side of it.
++	Vector target = end - offset;
++	if ( !TransformThroughPortals( &target, &angles, NULL ) )
++		return false;
++
++	SetTargetPosition( target, angles );
+ 
+ 	return true;
+ }
+@@ -1999,6 +2096,8 @@ void CWeaponPhysCannon::UpdateObject( void )
+ //-----------------------------------------------------------------------------
+ void CWeaponPhysCannon::DetachObject( bool playSound, bool wasLaunched )
+ {
++	m_nHeldPortalCount = 0;
++
+ #ifndef CLIENT_DLL
+ 	// misyl: Disable pred filtering in this server-only section.
+ 	CDisablePredictionFiltering disablePred;
+@@ -2061,7 +2160,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
+ {
+ 	CBaseEntity *pAttachedObject = m_hAttachedObject.Get();
+ 
+-	if ( m_hAttachedObject )
++	// Held through a portal: show the server's position instead of predicting
++	// it (the client doesn't know which portals it went through).
++	if ( m_hAttachedObject && m_nHeldPortalCount == 0 )
+ 	{
+ 		// NOTE :This must happen after OnPhysGunPickup because that can change the mass
+ 		if ( pAttachedObject != GetGrabController().GetAttached() )
+@@ -3342,3 +3443,74 @@ void CallbackPhyscannonImpact( const CEffectData &data )
+ DECLARE_CLIENT_EFFECT( "PhyscannonImpact", CallbackPhyscannonImpact );
+ 
+ #endif
++
++#ifndef CLIENT_DLL
++//-----------------------------------------------------------------------------
++// Portal mod: keep held objects held when they or their holder go through a
++// portal (called by CHL2MPPortal).
++//-----------------------------------------------------------------------------
++static CGrabController *GetPlayerGrabController( CBasePlayer *pPlayer, CWeaponPhysCannon **ppCannon )
++{
++	*ppCannon = NULL;
++
++	CPlayerPickupController *pPickup = dynamic_cast<CPlayerPickupController *>( pPlayer->GetUseEntity() );
++	if ( pPickup && pPickup->GetGrabController().GetAttached() )
++		return &pPickup->GetGrabController();
++
++	CWeaponPhysCannon *pCannon = dynamic_cast<CWeaponPhysCannon *>( pPlayer->GetActiveWeapon() );
++	if ( pCannon && pCannon->GetGrabController().GetAttached() )
++	{
++		*ppCannon = pCannon;
++		return &pCannon->GetGrabController();
++	}
++	return NULL;
++}
++
++static void PortalHoldFailed( CBasePlayer *pPlayer, CWeaponPhysCannon *pCannon )
++{
++	// Only when the portal chain gets deeper than we track.
++	if ( pCannon )
++		pCannon->ForceDrop();
++	else
++		pPlayer->ForceDropOfCarriedPhysObjects( NULL );
++}
++
++void PhysCannon_HeldObjectWentThroughPortal( CBaseEntity *pObject, CHL2MPPortal *pPortal )
++{
++	for ( int i = 1; i <= gpGlobals->maxClients; i++ )
++	{
++		CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
++		if ( !pPlayer )
++			continue;
++
++		CWeaponPhysCannon *pCannon;
++		CGrabController *pController = GetPlayerGrabController( pPlayer, &pCannon );
++		if ( !pController || pController->GetAttached() != pObject )
++			continue;
++
++		if ( !pController->OnAttachedWentThroughPortal( pPortal ) )
++		{
++			PortalHoldFailed( pPlayer, pCannon );
++			continue;
++		}
++		if ( pCannon )
++			pCannon->m_nHeldPortalCount = pController->GetPortalCount();
++	}
++}
++
++void PhysCannon_HolderWentThroughPortal( CBasePlayer *pPlayer, CHL2MPPortal *pPortal )
++{
++	CWeaponPhysCannon *pCannon;
++	CGrabController *pController = GetPlayerGrabController( pPlayer, &pCannon );
++	if ( !pController )
++		return;
++
++	if ( !pController->OnHolderWentThroughPortal( pPortal ) )
++	{
++		PortalHoldFailed( pPlayer, pCannon );
++		return;
++	}
++	if ( pCannon )
++		pCannon->m_nHeldPortalCount = pController->GetPortalCount();
++}
++#endif
+diff --git a/src/game/shared/hl2mp/weapon_physcannon.h b/src/game/shared/hl2mp/weapon_physcannon.h
+index 9b45d9d..93e88c5 100644
+--- a/src/game/shared/hl2mp/weapon_physcannon.h
++++ b/src/game/shared/hl2mp/weapon_physcannon.h
+@@ -195,6 +195,8 @@ private:
+ #endif
+ 
+ //-----------------------------------------------------------------------------
++#include "hl2mp_portal.h"
++
+ class CGrabController : public IMotionEvent
+ {
+ public:
+@@ -217,6 +219,15 @@ public:
+ 
+ 	CBaseEntity *GetAttached() { return (CBaseEntity *)m_attachedEntity; }
+ 
++	// Portal mod: portals between the holder and the held object, holder side
++	// first. The hold target is carried through them, so a held object can go
++	// through a portal (and the holder after it) without being dropped.
++	int GetPortalCount() const { return m_nPortals; }
++	bool OnAttachedWentThroughPortal( CHL2MPPortal *pPortal );
++	bool OnHolderWentThroughPortal( CHL2MPPortal *pPortal );
++	// Holder space -> object space. False if a portal on the way closed.
++	bool TransformThroughPortals( Vector *pPosition, QAngle *pAngles, Vector *pDirection ) const;
++
+ 	IMotionEvent::simresult_e Simulate( IPhysicsMotionController *pController, IPhysicsObject *pObject, float deltaTime, Vector &linear, AngularImpulse &angular );
+ 	float GetSavedMass( IPhysicsObject *pObject );
+ 
+@@ -246,6 +257,9 @@ private:
+ 
+ 	IPhysicsMotionController *m_controller;
+ 	int				m_frameCount;
++
++	CHandle<CHL2MPPortal> m_hPortals[HL2MP_PORTAL_MAX_RECURSION];
++	int				m_nPortals;
+ 	friend class CWeaponPhysCannon;
+ };
+ 
+@@ -304,6 +318,9 @@ public:
+ 	CNetworkVector	( m_attachedPositionObjectSpace );
+ 
+ 	CNetworkHandle( CBaseEntity, m_hAttachedObject );
++	// Portals between the holder and the held object (client stops predicting
++	// the object while it's on the far side of one).
++	CNetworkVar( int, m_nHeldPortalCount );
+ 
+ 	EHANDLE m_hOldAttachedObject;
+ 
 diff --git a/src/game/shared/props_shared.cpp b/src/game/shared/props_shared.cpp
 index 4c21656..351a66a 100644
 --- a/src/game/shared/props_shared.cpp

@@ -16,7 +16,6 @@
 	#include "view.h"
 	#include "c_world.h"
 #else
-	#include "hl2_player.h"
 	#include "world.h"
 	#include "vphysics/player_controller.h"
 #endif
@@ -574,31 +573,9 @@ static void GetPortalEntityVelocity( CBaseEntity *pEntity, Vector *pVelocity, An
 	}
 }
 
-extern CBaseEntity *PhysCannonGetHeldEntity( CBaseCombatWeapon *pActiveWeapon );
-
-// Make whoever holds pEntity (gravity gun or +use) let go of it. HL2's
-// Pickup_ForcePlayerToDropThisObject uses UTIL_GetLocalPlayer(), which is NULL
-// in multiplayer (crashed when a held prop reached a portal).
-static void PortalForceDropHeldObject( CBaseEntity *pEntity )
-{
-	IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
-	if ( !pPhys || !( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
-		return;
-
-	for ( int i = 1; i <= gpGlobals->maxClients; i++ )
-	{
-		CHL2_Player *pPlayer = static_cast<CHL2_Player *>( UTIL_PlayerByIndex( i ) );
-		if ( !pPlayer )
-			continue;
-
-		// ForceDropOfCarriedPhysObjects drops whatever the player holds, so
-		// only call it on the holder.
-		if ( pPlayer->IsHoldingEntity( pEntity ) || PhysCannonGetHeldEntity( pPlayer->GetActiveWeapon() ) == pEntity )
-		{
-			pPlayer->ForceDropOfCarriedPhysObjects( pEntity );
-		}
-	}
-}
+// Keep held objects held through portals (weapon_physcannon.cpp).
+extern void PhysCannon_HeldObjectWentThroughPortal( CBaseEntity *pObject, CHL2MPPortal *pPortal );
+extern void PhysCannon_HolderWentThroughPortal( CBasePlayer *pPlayer, CHL2MPPortal *pPortal );
 
 // Extent of an axis-aligned box (half sizes) along a direction.
 static float BoxSupport( const Vector &vHalf, const Vector &vDir )
@@ -950,18 +927,19 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity )
 		return false;
 	}
 
-	// Gravity-gunned objects get dropped; the holder can't follow them.
-	PortalForceDropHeldObject( pEntity );
-
 	Vector vNewOrigin = vNewCenter - vOffset;
 	pEntity->Teleport( &vNewOrigin, &angNew, &vNewVelocity );
 
 	if ( pEntity->IsPlayer() )
 	{
 		pEntity->SetGroundEntity( NULL );
+		PhysCannon_HolderWentThroughPortal( static_cast<CBasePlayer *>( pEntity ), this );
 	}
 	else
 	{
+		// Still held (gravity gun or +use) on the other side.
+		PhysCannon_HeldObjectWentThroughPortal( pEntity, this );
+
 		IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
 		if ( pEntity->GetMoveType() == MOVETYPE_VPHYSICS && pPhys )
 		{

@@ -15,6 +15,7 @@
 #include "weapon_rpg.h"
 #include "igamesystem.h"
 #include "hl2mp_player.h"
+#include "player_pickup.h"
 #include "usercmd.h"
 #include "in_buttons.h"
 
@@ -280,6 +281,19 @@ private:
 			Vector vecBottom = m_hWall->GetAbsOrigin() - Vector( 0, 0, HL2MP_PORTAL_HALF_HEIGHT );
 			Msg( "PORTALTEST info wall portal bottom z %.1f, bot feet z %.1f\n", vecBottom.z, vecStart.z );
 
+			// The bot carries a box with +use; it must stay held through the portal.
+			{
+				CBaseEntity *pBox = CreateEntityByName( "prop_physics" );
+				pBox->SetAbsOrigin( vecStart + Vector( 0, 0, 48 ) - m_vecWallNormal * 40 );
+				pBox->KeyValue( "model", "models/props_junk/cardboard_box001a.mdl" );
+				pBox->Precache();
+				DispatchSpawn( pBox );
+				pBox->Activate();
+				PlayerPickupObject( pBot, pBox );
+				m_hHeldBox = pBox;
+				Msg( "PORTALTEST info bot holding box=%d\n", static_cast<CHL2_Player *>( pBot )->IsHoldingEntity( pBox ) );
+			}
+
 			m_hBot = pBot;
 			m_bBotWalk = true;
 			m_flBotClosest = FLT_MAX;
@@ -292,6 +306,11 @@ private:
 			bool bSnapped = CHL2MPPortal::WasTeleported( m_hBot );
 			Result( "player_walks_through", m_flBotClosest < 80.0f, "closest_to_exit=%.0f", m_flBotClosest );
 			Result( "player_through_seamless", m_flBotClosest < 80.0f && !bSnapped, "snap_teleported=%d", bSnapped );
+			CHL2_Player *pBot = static_cast<CHL2_Player *>( ToBasePlayer( m_hBot ) );
+			bool bHeld = pBot && m_hHeldBox && pBot->IsHoldingEntity( m_hHeldBox );
+			Result( "held_prop_stays_held_through_portal", bHeld && CHL2MPPortal::WasTeleported( m_hHeldBox ),
+				"held=%d box_teleported=%d", bHeld, m_hHeldBox ? CHL2MPPortal::WasTeleported( m_hHeldBox ) : 0 );
+
 			m_bBotWalk = false;
 			m_hBot = NULL;
 			Finish();
@@ -312,7 +331,7 @@ private:
 	int		m_nBotCommand;
 	float	m_flBotClosest;
 	float	m_flNextBotLog;
-	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan;
+	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan, m_hHeldBox;
 };
 
 static CHL2MPPortalSelfTest g_HL2MPPortalSelfTest;

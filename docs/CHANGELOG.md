@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 — unreleased
+
+### Fixed
+- Crash when a held prop reached a portal (HL2's drop helper uses `UTIL_GetLocalPlayer()`, NULL in multiplayer).
+- Props resting where a portal opened stayed frozen until touched: HL2MP made small props client-only, so the
+  server never had them. `sv_pushaway_clientside_size` defaults to 0 in HL2MP, so every prop is a real server prop.
+- Portals seen through a portal drew flat grey; they now show their own live view (one level, `cl_portal_recursion`).
+- Bullets out of a portal can hit their shooter.
+
+### Added
+- Held props stay held through portals (gravity gun and `+use`): the hold target follows the portals between holder
+  and prop, punts/throws aim through them, and the client pauses prediction while the prop is on the far side.
+- Players walk into portals seamlessly: no wall collision inside the hole, the part through it collides on the exit
+  side, and they go through when the eye crosses the plane (predicted). Off-center players still snap through.
+- Wall portals just above the floor drop onto it so players can walk in.
+- Tunnel mesh behind live portals: the far side stays visible with the camera right at the portal.
+- Real-server self-test (`sv_portal_selftest`, `scripts/selftest.sh`, CI): props, held props, traces, rockets, small
+  props, and a bot walking through while carrying a box.
+
 ## 0.3.2 — 2026-10-21
 
 ### Fixed
