@@ -37,11 +37,18 @@ export LD_LIBRARY_PATH="$SRCDS/bin/linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 sed -i 's/|appid_243750|/|all_source_engine_paths|/g' "$SRCDS/hl2dm_portal/gameinfo.txt"
 
 echo ">> srcds64 -game hl2dm_portal +map $MAP"
-timeout 300 ./srcds64 -game hl2dm_portal -console -norestart -nobreakpad -insecure \
-    +sv_lan 1 +maxplayers 4 +sv_portal_selftest 1 +path +map "$MAP" > "$LOG" 2>&1
+ARGS=( -game hl2dm_portal -console -norestart -nobreakpad -insecure
+    +sv_lan 1 +maxplayers 4 +sv_portal_selftest 1 +path +map "$MAP" )
+if command -v gdb > /dev/null; then
+    # Under gdb so a crash prints a backtrace into the log.
+    timeout 300 gdb -batch -ex "set pagination off" -ex run -ex bt -ex "info sharedlibrary" \
+        --args ./srcds64 "${ARGS[@]}" > "$LOG" 2>&1
+else
+    timeout 300 stdbuf -oL -eL ./srcds64 "${ARGS[@]}" > "$LOG" 2>&1
+fi
 echo ">> server exited ($?)"
 
-grep -E "PORTALTEST|Segmentation|crash|Couldn't|Failed to load|error" "$LOG" | head -60 || true
+grep -E "PORTALTEST|SIGSEGV|Segmentation|crash|Couldn't|Failed to load|error|^#[0-9]" "$LOG" | head -80 || true
 
 if ! grep -q "PORTALTEST DONE" "$LOG"; then
     echo ">> self-test did not finish. Last 80 lines:"
