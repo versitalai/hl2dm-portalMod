@@ -1,0 +1,432 @@
+diff --git a/src/game/client/c_baseplayer.cpp b/src/game/client/c_baseplayer.cpp
+index 76d6693..23e370d 100644
+--- a/src/game/client/c_baseplayer.cpp
++++ b/src/game/client/c_baseplayer.cpp
+@@ -1991,6 +1991,14 @@ bool C_BasePlayer::InFirstPersonView()
+ //-----------------------------------------------------------------------------
+ bool C_BasePlayer::ShouldDrawThisPlayer()
+ {
++#ifdef HL2MP
++	// Players see themselves through portals.
++	extern bool g_bRenderingHL2MPPortalView;
++	if ( g_bRenderingHL2MPPortalView )
++	{
++		return true;
++	}
++#endif
+ 	if ( !InFirstPersonView() )
+ 	{
+ 		return true;
+diff --git a/src/game/client/client_hl2mp.vpc b/src/game/client/client_hl2mp.vpc
+index 7fcf892..a4ea0bf 100644
+--- a/src/game/client/client_hl2mp.vpc
++++ b/src/game/client/client_hl2mp.vpc
+@@ -134,6 +134,9 @@ $Project "Client (HL2MP)"
+ 			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_player_shared.h"
+ 			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_weapon_parse.cpp"
+ 			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_weapon_parse.h"
++			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_portal.cpp"
++			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_portal.h"
++			$File	"hl2mp\hl2mp_rendertargets.cpp"
+ 
+ 			$Folder	"Weapons"
+ 			{
+@@ -153,6 +156,7 @@ $Project "Client (HL2MP)"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_physcannon.cpp"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_physcannon.h"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_pistol.cpp"
++				$File	"$SRCDIR\game\shared\hl2mp\weapon_portalgun.cpp"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_rpg.cpp"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_rpg.h"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_shotgun.cpp"
+diff --git a/src/game/client/hl2mp/c_te_hl2mp_shotgun_shot.cpp b/src/game/client/hl2mp/c_te_hl2mp_shotgun_shot.cpp
+index 4283c3b..7d1d6be 100644
+--- a/src/game/client/hl2mp/c_te_hl2mp_shotgun_shot.cpp
++++ b/src/game/client/hl2mp/c_te_hl2mp_shotgun_shot.cpp
+@@ -10,6 +10,7 @@
+ #include "ammodef.h"
+ #include "c_te_effect_dispatch.h"
+ #include "shot_manipulator.h"
++#include "hl2mp_portal.h"
+ 
+ class C_TEHL2MPFireBullets : public C_BaseTempEntity
+ {
+@@ -82,18 +83,20 @@ void C_TEHL2MPFireBullets::CreateEffects( void )
+ 
+ 					// Don't run the biasing code for the player at the moment.
+ 					Vector vecDir = Manipulator.ApplySpread( Vector( m_flSpread, m_flSpread, m_flSpread ) );
+-					Vector vecEnd = m_vecOrigin + vecDir * MAX_TRACE_LENGTH;
+ 					trace_t tr;
+ 					CTraceFilterSkipPlayerAndViewModelOnly traceFilter;
+ 
++					// Bullets continue out of linked portals (matches CBaseEntity::FireBullets).
++					int nPortals;
+ 					if( m_iShots > 1 && iShot % 2 )
+ 					{
+ 						// Half of the shotgun pellets are hulls that make it easier to hit targets with the shotgun.
+-						UTIL_TraceHull( m_vecOrigin, vecEnd, Vector( -3, -3, -3 ), Vector( 3, 3, 3 ), MASK_SHOT, &traceFilter, &tr );
++						Vector vecHullMins( -3, -3, -3 ), vecHullMaxs( 3, 3, 3 );
++						nPortals = UTIL_HL2MPPortal_TraceRay( m_vecOrigin, vecDir, MAX_TRACE_LENGTH, MASK_SHOT, &traceFilter, &tr, NULL, &vecHullMins, &vecHullMaxs );
+ 					}
+ 					else
+ 					{
+-						UTIL_TraceLine( m_vecOrigin, vecEnd, MASK_SHOT, &traceFilter, &tr);
++						nPortals = UTIL_HL2MPPortal_TraceRay( m_vecOrigin, vecDir, MAX_TRACE_LENGTH, MASK_SHOT, &traceFilter, &tr );
+ 					}
+ 
+ 					if ( m_bDoTracers )
+@@ -105,9 +108,13 @@ void C_TEHL2MPFireBullets::CreateEffects( void )
+ 						data.m_vOrigin = tr.endpos;
+ 						data.m_hEntity = pWpn->GetRefEHandle();
+ 						data.m_flScale = 0.0f;
+-						data.m_fFlags |= TRACER_FLAG_USEATTACHMENT;
+-						// Stomp the start, since it's not going to be used anyway
+-						data.m_nAttachmentIndex = 1;
++						// After a portal the tracer starts at the exit, not the muzzle.
++						if ( nPortals == 0 )
++						{
++							data.m_fFlags |= TRACER_FLAG_USEATTACHMENT;
++							// Stomp the start, since it's not going to be used anyway
++							data.m_nAttachmentIndex = 1;
++						}
+ 
+ 						if ( pTracerName )
+ 						{
+diff --git a/src/game/client/viewrender.cpp b/src/game/client/viewrender.cpp
+index b4011e2..d9f0e6a 100644
+--- a/src/game/client/viewrender.cpp
++++ b/src/game/client/viewrender.cpp
+@@ -75,6 +75,10 @@
+ 
+ #ifdef USE_MONITORS
+ #include "c_point_camera.h"
++
++#ifdef HL2MP
++#include "hl2mp_portal.h"
++#endif
+ #endif // USE_MONITORS
+ 
+ // Projective textures
+@@ -2081,6 +2085,14 @@ void CViewRender::RenderView( const CViewSetup &viewRender, int nClearFlags, int
+ 		}
+ 	#endif
+ 
++	#ifdef HL2MP
++		// Live views through portals, rendered before the main view samples them.
++		if ( ( whatToDraw & RENDERVIEW_SUPPRESSMONITORRENDERING ) == 0 )
++		{
++			DrawHL2MPPortalViews( viewRender );
++		}
++	#endif
++
+ 		g_bRenderingView = true;
+ 
+ 		// Must be first 
+@@ -3237,6 +3249,157 @@ bool CViewRender::DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_Poin
+ 	return true;
+ }
+ 
++#ifdef HL2MP
++extern ConVar cl_portal_render_views;
++ConVar cl_portal_draw_local_player( "cl_portal_draw_local_player", "1", FCVAR_ARCHIVE, "Draw your own player model in portal views." );
++ConVar cl_portal_max_views( "cl_portal_max_views", "2", FCVAR_ARCHIVE, "Max portals rendered see-through per frame (closest first).", true, 0, true, HL2MP_PORTAL_MAX_VIEWS );
++
++// Is any part of the portal inside the view frustum?
++static bool HL2MPPortal_IsOnScreen( C_HL2MPPortal *pPortal, const VMatrix &matWorldToProjection, const Vector &vViewOrigin )
++{
++	Vector vForward, vRight, vUp;
++	pPortal->GetPortalVectors( &vForward, &vRight, &vUp );
++
++	// Close enough to touch: always visible (corners may be behind the camera).
++	if ( ( vViewOrigin - pPortal->GetAbsOrigin() ).LengthSqr() < 96.0f * 96.0f )
++		return true;
++
++	float flMinX = FLT_MAX, flMinY = FLT_MAX, flMaxX = -FLT_MAX, flMaxY = -FLT_MAX;
++	for ( int i = 0; i < 4; i++ )
++	{
++		Vector vCorner = pPortal->GetAbsOrigin() +
++			vRight * ( ( i & 1 ) ? HL2MP_PORTAL_HALF_WIDTH : -HL2MP_PORTAL_HALF_WIDTH ) +
++			vUp * ( ( i & 2 ) ? HL2MP_PORTAL_HALF_HEIGHT : -HL2MP_PORTAL_HALF_HEIGHT );
++
++		Vector4D vClip;
++		matWorldToProjection.V4Mul( Vector4D( vCorner.x, vCorner.y, vCorner.z, 1.0f ), vClip );
++		if ( vClip.w <= 0.0f )
++		{
++			// A corner behind the camera: can't bound it in screen space, assume visible.
++			return true;
++		}
++
++		float flX = vClip.x / vClip.w;
++		float flY = vClip.y / vClip.w;
++		flMinX = MIN( flMinX, flX ); flMaxX = MAX( flMaxX, flX );
++		flMinY = MIN( flMinY, flY ); flMaxY = MAX( flMaxY, flY );
++	}
++
++	return flMaxX >= -1.0f && flMinX <= 1.0f && flMaxY >= -1.0f && flMinY <= 1.0f;
++}
++
++void CViewRender::DrawHL2MPPortalViews( const CViewSetup &mainView )
++{
++	if ( !cl_portal_render_views.GetBool() || C_HL2MPPortal::GetPortalCount() == 0 )
++		return;
++
++	VMatrix matWorldToView, matViewToProjection, matWorldToPixels;
++	render->GetMatricesForView( mainView, &matWorldToView, &matViewToProjection, &g_matHL2MPPortalWorldToProjection, &matWorldToPixels );
++
++	// Pick the closest open, front-facing, on-screen portals.
++	CUtlVector<C_HL2MPPortal *> visible;
++	CUtlVector<float> distances;
++	for ( int i = 0; i < C_HL2MPPortal::GetPortalCount(); i++ )
++	{
++		C_HL2MPPortal *pPortal = C_HL2MPPortal::GetPortal( i );
++		if ( !pPortal->IsOpen() || pPortal->IsDormant() || pPortal->GetLinkedPortal()->IsDormant() )
++			continue;
++
++		Vector vToView = mainView.origin - pPortal->GetAbsOrigin();
++		if ( DotProduct( vToView, pPortal->GetSurfaceNormal() ) <= 0.0f )
++			continue;
++
++		if ( !HL2MPPortal_IsOnScreen( pPortal, g_matHL2MPPortalWorldToProjection, mainView.origin ) )
++			continue;
++
++		float flDist = vToView.LengthSqr();
++		int iInsert = 0;
++		while ( iInsert < distances.Count() && distances[iInsert] < flDist )
++			iInsert++;
++		visible.InsertBefore( iInsert, pPortal );
++		distances.InsertBefore( iInsert, flDist );
++	}
++
++	int nViews = MIN( visible.Count(), cl_portal_max_views.GetInt() );
++	if ( nViews <= 0 )
++		return;
++
++	static CTextureReference s_RenderTargets[HL2MP_PORTAL_MAX_VIEWS];
++
++	g_bRenderingHL2MPPortalView = true;
++
++	for ( int iSlot = 0; iSlot < nViews; iSlot++ )
++	{
++		if ( !s_RenderTargets[iSlot].IsValid() )
++		{
++			s_RenderTargets[iSlot].Init( materials->FindTexture( HL2MPPortal_GetRenderTargetName( iSlot ), TEXTURE_GROUP_RENDER_TARGET ) );
++		}
++
++		ITexture *pRenderTarget = s_RenderTargets[iSlot];
++		if ( !pRenderTarget || pRenderTarget->IsError() )
++			break;
++
++		C_HL2MPPortal *pPortal = visible[iSlot];
++		C_HL2MPPortal *pLinked = pPortal->GetLinkedPortal();
++
++		// The portal samples the target in the main view's screen space.
++		g_flHL2MPPortalUScale = (float)mainView.width / pRenderTarget->GetActualWidth();
++		g_flHL2MPPortalVScale = (float)mainView.height / pRenderTarget->GetActualHeight();
++
++		// Virtual camera: the main camera carried through the portal.
++		VMatrix matToLinked = pPortal->MatrixThisToLinked();
++		VMatrix matCamera, matVirtual;
++		matCamera.SetupMatrixOrgAngles( mainView.origin, mainView.angles );
++		matVirtual = matToLinked * matCamera;
++
++		CViewSetup portalView = mainView;
++		portalView.x = 0;
++		portalView.y = 0;
++		portalView.origin = matToLinked.VMul4x3( mainView.origin );
++		MatrixAngles( matVirtual.As3x4(), portalView.angles );
++		portalView.m_bDoBloomAndToneMapping = false;
++
++		// World vis from just in front of the exit, not from the camera (which is behind the wall).
++		Vector vExitNormal = pLinked->GetSurfaceNormal();
++		ViewCustomVisibility_t customVis;
++		customVis.AddVisOrigin( pLinked->GetAbsOrigin() + vExitNormal * 8.0f );
++
++		Frustum frustum;
++		render->Push3DView( portalView, VIEW_CLEAR_DEPTH | VIEW_CLEAR_COLOR, pRenderTarget, (VPlane *)frustum );
++
++		// Only draw what's in front of the exit portal.
++		Vector4D vClipPlane;
++		vClipPlane.AsVector3D() = vExitNormal;
++		vClipPlane.w = DotProduct( vExitNormal, pLinked->GetAbsOrigin() ) + 0.5f;
++		{
++			CMatRenderContextPtr pRenderContext( materials );
++			pRenderContext->PushCustomClipPlane( vClipPlane.Base() );
++		}
++
++		ViewDrawScene( false, SKYBOX_2DSKYBOX_VISIBLE, portalView, 0, VIEW_MONITOR, false, 0, &customVis );
++
++		// In first person the local player isn't in the render lists; draw them
++		// explicitly so you can see yourself through the portal.
++		C_BasePlayer *pLocalPlayer = C_BasePlayer::GetLocalPlayer();
++		if ( cl_portal_draw_local_player.GetBool() && pLocalPlayer && pLocalPlayer->IsAlive() && !C_BasePlayer::ShouldDrawLocalPlayer() )
++		{
++			pLocalPlayer->DrawModel( STUDIO_RENDER );
++		}
++
++		{
++			CMatRenderContextPtr pRenderContext( materials );
++			pRenderContext->PopCustomClipPlane();
++		}
++		render->PopView( frustum );
++
++		pPortal->m_iViewSlot = iSlot;
++		pPortal->m_iViewFrame = gpGlobals->framecount;
++	}
++
++	g_bRenderingHL2MPPortalView = false;
++}
++#endif // HL2MP
++
+ void CViewRender::DrawMonitors( const CViewSetup &cameraView )
+ {
+ #ifdef PORTAL
+diff --git a/src/game/client/viewrender.h b/src/game/client/viewrender.h
+index 052e3a7..ff32763 100644
+--- a/src/game/client/viewrender.h
++++ b/src/game/client/viewrender.h
+@@ -433,6 +433,11 @@ private:
+ 
+ 	void			DrawMonitors( const CViewSetup &cameraView );
+ 
++#ifdef HL2MP
++	// Render what's on the far side of visible portals into their render targets.
++	void			DrawHL2MPPortalViews( const CViewSetup &mainView );
++#endif
++
+ 	bool			DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_PointCamera *pCameraEnt, const CViewSetup &cameraView, C_BasePlayer *localPlayer, 
+ 						int x, int y, int width, int height );
+ 
+diff --git a/src/game/server/hl2mp/hl2mp_player.cpp b/src/game/server/hl2mp/hl2mp_player.cpp
+index 9457928..1fa0ffc 100644
+--- a/src/game/server/hl2mp/hl2mp_player.cpp
++++ b/src/game/server/hl2mp/hl2mp_player.cpp
+@@ -7,6 +7,7 @@
+ #include "cbase.h"
+ #include "weapon_hl2mpbasehlmpcombatweapon.h"
+ #include "hl2mp_player.h"
++#include "hl2mp_portal.h"
+ #include "globalstate.h"
+ #include "game.h"
+ #include "gamerules.h"
+@@ -236,9 +237,19 @@ void CHL2MP_Player::GiveAllItems( void )
+ 	GiveNamedItem( "weapon_slam" );
+ 
+ 	GiveNamedItem( "weapon_physcannon" );
++	GiveNamedItem( "weapon_portalgun" );
+ 	
+ }
+ 
++//-----------------------------------------------------------------------------
++// Purpose: Also network what's visible through portals the player can see.
++//-----------------------------------------------------------------------------
++void CHL2MP_Player::SetupVisibility( CBaseEntity *pViewEntity, unsigned char *pvs, int pvssize )
++{
++	BaseClass::SetupVisibility( pViewEntity, pvs, pvssize );
++	CHL2MPPortal::AddPortalsToPVS( pvs, pvssize );
++}
++
+ void CHL2MP_Player::GiveDefaultItems( void )
+ {
+ 	EquipSuit();
+@@ -262,6 +273,7 @@ void CHL2MP_Player::GiveDefaultItems( void )
+ 	GiveNamedItem( "weapon_smg1" );
+ 	GiveNamedItem( "weapon_frag" );
+ 	GiveNamedItem( "weapon_physcannon" );
++	GiveNamedItem( "weapon_portalgun" );
+ 
+ 	const char *szDefaultWeaponName = engine->GetClientConVarValue( engine->IndexOfEdict( edict() ), "cl_defaultweapon" );
+ 
+diff --git a/src/game/server/hl2mp/hl2mp_player.h b/src/game/server/hl2mp/hl2mp_player.h
+index 5fad238..b3a1660 100644
+--- a/src/game/server/hl2mp/hl2mp_player.h
++++ b/src/game/server/hl2mp/hl2mp_player.h
+@@ -55,6 +55,7 @@ public:
+ 
+ 	virtual void Precache( void );
+ 	virtual void Spawn( void );
++	virtual void SetupVisibility( CBaseEntity *pViewEntity, unsigned char *pvs, int pvssize );
+ 	virtual void PostThink( void );
+ 	virtual void PreThink( void );
+ 	virtual void PlayerDeathThink( void );
+diff --git a/src/game/server/server_hl2mp.vpc b/src/game/server/server_hl2mp.vpc
+index 8427634..64ee85d 100644
+--- a/src/game/server/server_hl2mp.vpc
++++ b/src/game/server/server_hl2mp.vpc
+@@ -323,6 +323,8 @@ $Project "Server (HL2MP)"
+ 			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_player_shared.h"
+ 			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_weapon_parse.cpp"
+ 			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_weapon_parse.h"
++			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_portal.cpp"
++			$File	"$SRCDIR\game\shared\hl2mp\hl2mp_portal.h"
+ 
+ 			$Folder "Bots"
+ 			{
+@@ -412,6 +414,7 @@ $Project "Server (HL2MP)"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_physcannon.cpp"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_physcannon.h"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_pistol.cpp"
++				$File	"$SRCDIR\game\shared\hl2mp\weapon_portalgun.cpp"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_rpg.cpp"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_rpg.h"
+ 				$File	"$SRCDIR\game\shared\hl2mp\weapon_shotgun.cpp"
+diff --git a/src/game/shared/baseentity_shared.cpp b/src/game/shared/baseentity_shared.cpp
+index bf44dc1..2dc5a0c 100644
+--- a/src/game/shared/baseentity_shared.cpp
++++ b/src/game/shared/baseentity_shared.cpp
+@@ -56,6 +56,10 @@ ConVar hl2_episodic( "hl2_episodic", "0", FCVAR_REPLICATED );
+ #include "rumble_shared.h"
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
++#ifdef HL2MP
++#include "hl2mp_portal.h"
++#endif
++
+ #include "tier0/memdbgon.h"
+ 
+ #ifdef GAME_DLL
+@@ -1738,6 +1742,10 @@ void CBaseEntity::FireBullets( const FireBulletsInfo_t &info )
+ 			{
+ 				pShootThroughPortal = NULL;
+ 			}
++#elif defined( HL2MP )
++			// HL2MP portal mod: bullets continue out of linked portals.
++			Vector vecHullMins( -3, -3, -3 ), vecHullMaxs( 3, 3, 3 );
++			UTIL_HL2MPPortal_TraceRay( info.m_vecSrc, vecDir, info.m_flDistance, MASK_SHOT, &traceFilter, &tr, &vecDir, &vecHullMins, &vecHullMaxs );
+ #else
+ 			AI_TraceHull( info.m_vecSrc, vecEnd, Vector( -3, -3, -3 ), Vector( 3, 3, 3 ), MASK_SHOT, &traceFilter, &tr );
+ #endif //#ifdef PORTAL
+@@ -1763,6 +1771,9 @@ void CBaseEntity::FireBullets( const FireBulletsInfo_t &info )
+ 			{
+ 				AI_TraceLine(info.m_vecSrc, vecEnd, MASK_SHOT, &traceFilter, &tr);
+ 			}
++#elif defined( HL2MP )
++			// HL2MP portal mod: bullets continue out of linked portals.
++			UTIL_HL2MPPortal_TraceRay( info.m_vecSrc, vecDir, info.m_flDistance, MASK_SHOT, &traceFilter, &tr, &vecDir );
+ #else
+ 			AI_TraceLine(info.m_vecSrc, vecEnd, MASK_SHOT, &traceFilter, &tr);
+ #endif //#ifdef PORTAL
+@@ -1971,6 +1982,14 @@ void CBaseEntity::FireBullets( const FireBulletsInfo_t &info )
+ 				}
+ #endif //#ifdef PORTAL
+ 
++#if defined( HL2MP )
++				// Bullet came out of a portal: draw the tracer from the exit, not the muzzle.
++				if ( tr.startpos != info.m_vecSrc )
++				{
++					UTIL_Tracer( tr.startpos, vecTracerDest, 0, TRACER_DONT_USE_ATTACHMENT, 0.0f, false, GetTracerType() );
++				}
++				else
++#endif
+ 				MakeTracer( vecTracerSrc, Tracer, pAmmoDef->TracerType(info.m_iAmmoType) );
+ 
+ #ifdef PORTAL
+@@ -2018,7 +2037,8 @@ void CBaseEntity::FireBullets( const FireBulletsInfo_t &info )
+ #if defined( HL2MP ) && defined( GAME_DLL )
+ 	if ( bDoServerEffects == false )
+ 	{
+-		TE_HL2MPFireBullets( entindex(), tr.startpos, info.m_vecDirShooting, info.m_iAmmoType, iEffectSeed, info.m_iShots, info.m_vecSpread.x, bDoTracers, bDoImpacts );
++		// Muzzle origin, not tr.startpos: after a portal that's the exit point.
++		TE_HL2MPFireBullets( entindex(), info.m_vecSrc, info.m_vecDirShooting, info.m_iAmmoType, iEffectSeed, info.m_iShots, info.m_vecSpread.x, bDoTracers, bDoImpacts );
+ 	}
+ #endif
+ 

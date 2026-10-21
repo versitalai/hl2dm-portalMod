@@ -1,0 +1,61 @@
+// Portal Gun (HL2MP portal mod)
+// Primary: blue portal. Secondary: orange portal. Reload: close both.
+
+WeaponData
+{
+	// Weapon data is loaded by both the Game and Client DLLs.
+	"printname"			"PORTAL GUN"
+	"viewmodel"			"models/weapons/v_physcannon.mdl"
+	"playermodel"		"models/weapons/w_Physics.mdl"
+	"anim_prefix"		"gauss"
+	"bucket"			"0"
+	"bucket_position"	"3"
+	"clip_size"			"-1"
+	"clip2_size"		"-1"
+	"primary_ammo"		"None"
+	"secondary_ammo"	"None"
+	"default_clip"		"0"
+	"default_clip2"		"0"
+	"weight"			"0"
+	"autoswitchto"		"0"
+	"autoswitchfrom"	"0"
+	"item_flags"		"0"
+
+	SoundData
+	{
+		// portal placed
+		"single_shot"		"Weapon_PhysCannon.Launch"
+		// portal didn't fit
+		"empty"				"Weapon_PhysCannon.DryFire"
+		// portals closed
+		"special1"			"Weapon_PhysCannon.Drop"
+	}
+
+	// Weapon Sprite data is loaded by the Client DLL.
+	TextureData
+	{
+		"weapon"
+		{
+				"font"		"WeaponIcons"
+				"character"	"m"
+		}
+		"weapon_s"
+		{
+				"font"		"WeaponIconsSelected"
+				"character"	"m"
+		}
+		"crosshair"
+		{
+				"font"		"Crosshairs"
+				"character"	"Q"
+		}
+		"autoaim"
+		{
+			"file"		"sprites/crosshairs"
+			"x"			"48"
+			"y"			"72"
+			"width"		"24"
+			"height"	"24"
+		}
+	}
+}
