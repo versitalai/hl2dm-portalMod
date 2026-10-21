@@ -195,8 +195,13 @@ CHL2MPPortal *CHL2MPPortal::FindPortalAtSurface( const Vector &vPoint, const Vec
 
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut,
-	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal )
+	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath )
 {
+	if ( pPath )
+	{
+		pPath->RemoveAll();
+	}
+
 	Vector vStart = vecStart;
 	Vector vDir = vecDir;
 	float flRemaining = flDist;
@@ -221,16 +226,34 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 			UTIL_TraceLine( vStart, vEnd, mask, pFilter, pTrace );
 		}
 
-		if ( nPortals >= HL2MP_PORTAL_MAX_RECURSION || pTrace->fraction >= 1.0f || pTrace->startsolid || !pTrace->DidHitWorld() )
-			break;
+		if ( pPath )
+		{
+			pPath->AddToTail( vStart );
+		}
 
-		CHL2MPPortal *pPortal = CHL2MPPortal::FindPortalAtSurface( pTrace->endpos, pTrace->plane.normal, flTolerance, pIgnorePortal );
+		CHL2MPPortal *pPortal = NULL;
+		if ( nPortals < HL2MP_PORTAL_MAX_RECURSION && pTrace->fraction < 1.0f && !pTrace->startsolid && pTrace->DidHitWorld() )
+		{
+			pPortal = CHL2MPPortal::FindPortalAtSurface( pTrace->endpos, pTrace->plane.normal, flTolerance, pIgnorePortal );
+		}
+
 		if ( !pPortal )
+		{
+			if ( pPath )
+			{
+				pPath->AddToTail( pTrace->endpos );
+			}
 			break;
+		}
 
 		// Bring the hit point onto the portal plane, then out of the linked portal.
 		Vector vNormal = pPortal->GetSurfaceNormal();
 		Vector vHit = pTrace->endpos - vNormal * DotProduct( vNormal, pTrace->endpos - pPortal->GetAbsOrigin() );
+
+		if ( pPath )
+		{
+			pPath->AddToTail( vHit );
+		}
 
 		VMatrix matToLinked = pPortal->MatrixThisToLinked();
 		CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
@@ -497,6 +520,11 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	AngularImpulse angVelocity;
 	GetPortalEntityVelocity( pEntity, &vVelocity, &angVelocity );
 	float flNormalSpeed = DotProduct( vVelocity, vForward );
+
+	// Non-physics, non-player things only move by their velocity; a still one
+	// is attached to something (SLAM tripmine on a wall) and stays put.
+	if ( !pEntity->IsPlayer() && pEntity->GetMoveType() != MOVETYPE_VPHYSICS && vVelocity.LengthSqr() < 1.0f )
+		return false;
 
 	bool bTouching = ( flGap <= PORTAL_TOUCH_DIST ) && ( flNormalSpeed <= 1.0f );
 	bool bArriving = ( flNormalSpeed < -1.0f ) && ( flGap <= -flNormalSpeed * TICK_INTERVAL * sv_portal_lookahead.GetFloat() + PORTAL_TOUCH_DIST );

@@ -14,8 +14,10 @@ Anything that moves goes through them. You see through them live.
 | Projectiles: rockets, crossbow bolts, SMG grenades, frags, AR2 energy balls, SLAM satchels | Caught up to `sv_portal_lookahead` ticks early, so fast ones don't hit the wall first |
 | Bullets (all hitscan weapons, shotgun pellets) | Trace continues out of the linked portal (up to 4 portals deep), with impacts and tracers on the far side |
 | Portal gun shots | Go through existing portals too, so you can place a portal through a portal |
+| SLAM tripmine laser | Beam continues through portals (drawn on every segment). Anyone crossing any segment trips it; opening, closing or moving a portal on its path trips it too |
 
-Gravity-gunned objects are dropped as they go through. Props with motion disabled stay put.
+Gravity-gunned objects are dropped as they go through. Props with motion disabled, and things stuck to walls (a
+placed tripmine), stay put.
 
 ## See-through rendering
 
@@ -23,7 +25,18 @@ The client renders the scene from a virtual camera behind the exit portal into a
 it onto the portal surface. You see live action through portals, and your own player model in them. Through-portal
 recursion (a portal seen inside a portal view) draws as a solid tinted portal.
 
-## Controls
+## Multiplayer
+
+Built for it: HL2DM is multiplayer-only, and everything runs server-authoritative.
+- Every player has their own blue/orange pair. Anyone can use anyone's portals.
+- Portals are always networked to every client (`FL_EDICT_ALWAYS`), so each client can draw any portal and its view.
+- Teleporting happens on the server and replicates like `trigger_teleport`. Clients don't predict it, so with latency
+  your view snaps through after a round trip.
+- Bullets are traced through portals the same way on server and client, so impacts line up.
+- Each player's PVS gets the exit side of portals they can see, so players/props over there are sent and show up in
+  the portal view.
+- Each client renders its own portal views (up to 2 per frame).
+
 
 | Input | Action |
 |---|---|

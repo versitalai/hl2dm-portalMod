@@ -296,6 +296,179 @@ index 052e3a7..ff32763 100644
  	bool			DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_PointCamera *pCameraEnt, const CViewSetup &cameraView, C_BasePlayer *localPlayer, 
  						int x, int y, int width, int height );
  
+diff --git a/src/game/server/hl2mp/grenade_tripmine.cpp b/src/game/server/hl2mp/grenade_tripmine.cpp
+index e14a929..c9e3fb6 100644
+--- a/src/game/server/hl2mp/grenade_tripmine.cpp
++++ b/src/game/server/hl2mp/grenade_tripmine.cpp
+@@ -31,6 +31,8 @@ BEGIN_DATADESC( CTripmineGrenade )
+ 	DEFINE_FIELD( m_vecDir,		FIELD_VECTOR ),
+ 	DEFINE_FIELD( m_vecEnd,		FIELD_POSITION_VECTOR ),
+ 	DEFINE_FIELD( m_flBeamLength, FIELD_FLOAT ),
++	DEFINE_AUTO_ARRAY( m_hPortalBeams, FIELD_EHANDLE ),
++	DEFINE_FIELD( m_nBeamPortals, FIELD_INTEGER ),
+ 	DEFINE_FIELD( m_pBeam,		FIELD_CLASSPTR ),
+ 	DEFINE_FIELD( m_posOwner,		FIELD_POSITION_VECTOR ),
+ 	DEFINE_FIELD( m_angleOwner,	FIELD_VECTOR ),
+@@ -49,6 +51,7 @@ CTripmineGrenade::CTripmineGrenade()
+ 	m_vecEnd.Init();
+ 	m_posOwner.Init();
+ 	m_angleOwner.Init();
++	m_nBeamPortals = 0;
+ }
+ 
+ void CTripmineGrenade::Spawn( void )
+@@ -135,18 +138,48 @@ void CTripmineGrenade::KillBeam( void )
+ 		UTIL_Remove( m_pBeam );
+ 		m_pBeam = NULL;
+ 	}
++
++	for ( int i = 0; i < HL2MP_PORTAL_MAX_RECURSION; i++ )
++	{
++		if ( m_hPortalBeams[i] )
++		{
++			UTIL_Remove( m_hPortalBeams[i] );
++			m_hPortalBeams[i] = NULL;
++		}
++	}
+ }
+ 
+ 
+-void CTripmineGrenade::MakeBeam( void )
++float CTripmineGrenade::TraceBeam( unsigned int mask, trace_t &tr, CUtlVector<Vector> *pPath, int *pnPortals )
+ {
+-	trace_t tr;
++	CUtlVector<Vector> path;
++	CTraceFilterSimple traceFilter( this, COLLISION_GROUP_NONE );
++	*pnPortals = UTIL_HL2MPPortal_TraceRay( GetAbsOrigin(), m_vecDir, 2048, mask, &traceFilter, &tr, NULL, NULL, NULL, NULL, &path );
++
++	// Path is start/end pairs, one per segment.
++	float flLength = 0.0f;
++	for ( int i = 0; i + 1 < path.Count(); i += 2 )
++	{
++		flLength += ( path[i + 1] - path[i] ).Length();
++	}
+ 
+-	UTIL_TraceLine( GetAbsOrigin(), m_vecEnd, MASK_SHOT, this, COLLISION_GROUP_NONE, &tr );
++	if ( pPath )
++	{
++		*pPath = path;
++	}
+ 
+-	m_flBeamLength = tr.fraction;
++	return flLength;
++}
+ 
+ 
++void CTripmineGrenade::MakeBeam( void )
++{
++	trace_t tr;
++	CUtlVector<Vector> drawPath;
++	int nPortals;
++
++	m_flBeamLength = TraceBeam( MASK_SHOT, tr, &drawPath, &nPortals );
++	m_nBeamPortals = nPortals;
+ 
+ 	// If I hit a living thing, send the beam through me so it turns on briefly
+ 	// and then blows the living thing up
+@@ -154,12 +187,11 @@ void CTripmineGrenade::MakeBeam( void )
+ 	CBaseCombatCharacter *pBCC  = ToBaseCombatCharacter( pEntity );
+ 
+ 	// Draw length is not the beam length if entity is in the way
+-	float drawLength = tr.fraction;
+ 	if (pBCC)
+ 	{
+ 		SetOwnerEntity( pBCC );
+-		UTIL_TraceLine( GetAbsOrigin(), m_vecEnd, MASK_SHOT, this, COLLISION_GROUP_NONE, &tr );
+-		m_flBeamLength = tr.fraction;
++		m_flBeamLength = TraceBeam( MASK_SHOT, tr, NULL, &nPortals );
++		m_nBeamPortals = nPortals;
+ 		SetOwnerEntity( NULL );
+ 		
+ 	}
+@@ -171,7 +203,7 @@ void CTripmineGrenade::MakeBeam( void )
+ 	// to appear if person right in front of it
+ 	SetNextThink( gpGlobals->curtime + 1.0f );
+ 
+-	Vector vecTmpEnd = GetLocalOrigin() + m_vecDir * 2048 * drawLength;
++	Vector vecTmpEnd = drawPath.Count() >= 2 ? drawPath[1] : GetAbsOrigin() + m_vecDir * 2048;
+ 
+ 	m_pBeam = CBeam::BeamCreate( g_pModelNameLaser, 0.35 );
+ 	m_pBeam->PointEntInit( vecTmpEnd, this );
+@@ -181,6 +213,17 @@ void CTripmineGrenade::MakeBeam( void )
+ 	
+ 	int beamAttach = LookupAttachment("beam_attach");
+ 	m_pBeam->SetEndAttachment( beamAttach );
++
++	// Portal mod: the rest of the beam, out of each portal it went into.
++	for ( int i = 1; i < HL2MP_PORTAL_MAX_RECURSION + 1 && i * 2 + 1 < drawPath.Count(); i++ )
++	{
++		CBeam *pBeam = CBeam::BeamCreate( g_pModelNameLaser, 0.35 );
++		pBeam->PointsInit( drawPath[i * 2], drawPath[i * 2 + 1] );
++		pBeam->SetColor( 255, 55, 52 );
++		pBeam->SetScrollRate( 25.6 );
++		pBeam->SetBrightness( 64 );
++		m_hPortalBeams[i - 1] = pBeam;
++	}
+ }
+ 
+ 
+@@ -201,9 +244,12 @@ void CTripmineGrenade::BeamBreakThink( void  )
+ 	}
+ 
+ 	trace_t tr;
++	int nPortals;
+ 
+ 	// NOT MASK_SHOT because we want only simple hit boxes
+-	UTIL_TraceLine( GetAbsOrigin(), m_vecEnd, MASK_SOLID, this, COLLISION_GROUP_NONE, &tr );
++	// Portal mod: follows the beam through portals, so anything crossing any
++	// segment trips it, and so does opening/closing/moving a portal on its path.
++	float flLength = TraceBeam( MASK_SOLID, tr, NULL, &nPortals );
+ 
+ 	// ALERT( at_console, "%f : %f\n", tr.flFraction, m_flBeamLength );
+ 
+@@ -219,7 +265,8 @@ void CTripmineGrenade::BeamBreakThink( void  )
+ 	CBaseEntity *pEntity = tr.m_pEnt;
+ 	CBaseCombatCharacter *pBCC  = ToBaseCombatCharacter( pEntity );
+ 
+-	if (pBCC || fabs( m_flBeamLength - tr.fraction ) > 0.001)
++	// Same 0.001 tolerance as before, in units (fraction of 2048).
++	if (pBCC || fabs( m_flBeamLength - flLength ) > 2048 * 0.001 || nPortals != m_nBeamPortals )
+ 	{
+ 		m_iHealth = 0;
+ 		Event_Killed( CTakeDamageInfo( (CBaseEntity*)m_hOwner, this, 100, GIB_NORMAL ) );
+diff --git a/src/game/server/hl2mp/grenade_tripmine.h b/src/game/server/hl2mp/grenade_tripmine.h
+index e188709..b10bed5 100644
+--- a/src/game/server/hl2mp/grenade_tripmine.h
++++ b/src/game/server/hl2mp/grenade_tripmine.h
+@@ -12,6 +12,7 @@
+ #endif
+ 
+ #include "basegrenade_shared.h"
++#include "hl2mp_portal.h"
+ 
+ class CBeam;
+ 
+@@ -37,6 +38,9 @@ public:
+ 	void MakeBeam( void );
+ 	void KillBeam( void );
+ 
++	// Trace the beam (through portals). Returns its total length.
++	float TraceBeam( unsigned int mask, trace_t &tr, CUtlVector<Vector> *pPath, int *pnPortals );
++
+ public:
+ 	EHANDLE		m_hOwner;
+ 
+@@ -47,6 +51,10 @@ private:
+ 	float		m_flBeamLength;
+ 
+ 	CBeam		*m_pBeam;
++
++	// Beam segments after each portal it passes through.
++	CHandle<CBeam>	m_hPortalBeams[HL2MP_PORTAL_MAX_RECURSION];
++	int			m_nBeamPortals;
+ 	Vector		m_posOwner;
+ 	Vector		m_angleOwner;
+ 
 diff --git a/src/game/server/hl2mp/hl2mp_player.cpp b/src/game/server/hl2mp/hl2mp_player.cpp
 index 9457928..1fa0ffc 100644
 --- a/src/game/server/hl2mp/hl2mp_player.cpp

@@ -13,6 +13,7 @@ How the portal mod works, file by file. Paths are relative to the SDK tree (`sdk
 | `src/game/client/viewrender.cpp/.h` | patched | `CViewRender::DrawHL2MPPortalViews()`: renders portal views before the main view |
 | `src/game/client/c_baseplayer.cpp` | patched | `ShouldDrawThisPlayer()` is true during portal views (see yourself) |
 | `src/game/shared/baseentity_shared.cpp` | patched | `FireBullets()` traces through portals; TE gets the muzzle origin; tracer from exit |
+| `src/game/server/hl2mp/grenade_tripmine.cpp/.h` | patched | SLAM laser traces/draws through portals; break check compares total length + portal count |
 | `src/game/client/hl2mp/c_te_hl2mp_shotgun_shot.cpp` | patched | Client impact/tracer re-simulation traces through portals |
 | `src/game/server/hl2mp/hl2mp_player.cpp/.h` | patched | Gives the gun on spawn / `impulse 101`; `SetupVisibility()` adds portal exits to the PVS |
 | `src/game/{client,server}/*_hl2mp.vpc` | patched | Adds the new files to the projects |
@@ -41,7 +42,8 @@ checks these conventions against the SDK's mathlib (`tests/run_math_test.sh`).
 
 1. Enumerate entities in a box from 8 units behind the plane to 160 in front, covering the ellipse.
 2. `ShouldTeleport` filters: no world, parented, `MOVETYPE_NONE/PUSH/NOCLIP/OBSERVER/LADDER`, non-physics brush
-   entities, motion-disabled physics, dead/observing/driving players, cooldown.
+   entities, motion-disabled physics, non-physics things standing still (they're attached, e.g. a placed tripmine),
+   dead/observing/driving players, cooldown.
 3. It goes through if its center is in front of the plane, it crosses the plane inside the ellipse, and either
    - **touching**: AABB leading face within 1 unit of the plane and not moving away (walking into a wall portal,
      resting on a floor portal), or
@@ -60,6 +62,13 @@ trace from the mapped hit point on the exit portal with the mapped direction (ma
 uses it in HL2MP for both line and hull pellets. HL2MP draws impacts client-side via `C_TEHL2MPFireBullets`, which
 re-simulates the shot, so that file uses the same function. Both DLLs see the same portals because portals are always
 transmitted (`FL_EDICT_ALWAYS`).
+
+## SLAM tripmine laser (server)
+
+`CTripmineGrenade::TraceBeam` uses the same portal trace and returns the beam's total length and portal count.
+`MakeBeam` draws the first segment as before (mine attachment to first hit) plus one `CBeam` per segment after each
+portal. `BeamBreakThink` re-traces every 0.05 s and detonates when it hits a living thing, the total length changes by
+more than the stock tolerance (0.001 of 2048 units), or the number of portals on the path changes.
 
 ## Seeing through (client)
 

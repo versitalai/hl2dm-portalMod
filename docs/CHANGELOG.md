@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.0 — 2026-10-21
+
+### Added
+- SLAM tripmine laser passes through portals: traced and drawn per segment, trips on anything crossing any segment
+  and when a portal on its path opens, closes or moves.
+- `UTIL_HL2MPPortal_TraceRay` can return the traced path (start/end pair per segment).
+
+### Fixed
+- A placed tripmine inside a portal's area would itself be teleported (it's `MOVETYPE_FLY` with zero velocity,
+  touching the plane). Non-physics, non-player entities that aren't moving are now never teleported.
+
+### Verified
+- Builds clean (gcc 13), no warnings in changed code; math test passes. Not play-tested.
+
 ## 0.1.0 — 2026-10-21
 
 First version, on Source SDK 2013 commit `be57e3d01ac7d7aa6a2cacbfef187c0b46616db0`.

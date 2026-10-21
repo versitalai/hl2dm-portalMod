@@ -18,6 +18,7 @@
 #endif
 
 #include "mathlib/vmatrix.h"
+#include "utlvector.h"
 
 #ifdef CLIENT_DLL
 #define CHL2MPPortal C_HL2MPPortal
@@ -116,10 +117,11 @@ private:
 // Trace a ray (or hull), continuing it out of any open portal it hits on a
 // world surface. Returns the number of portals passed through. *pTrace holds
 // the final segment (startpos is where it left the last portal), *pVecDirOut
-// the final direction.
+// the final direction. *pPath gets each segment as a start/end pair.
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut = NULL,
-	const Vector *pHullMins = NULL, const Vector *pHullMaxs = NULL, CHL2MPPortal *pIgnorePortal = NULL );
+	const Vector *pHullMins = NULL, const Vector *pHullMaxs = NULL, CHL2MPPortal *pIgnorePortal = NULL,
+	CUtlVector<Vector> *pPath = NULL );
 
 #ifdef CLIENT_DLL
 // Set while a portal view is being rendered into a render target.
