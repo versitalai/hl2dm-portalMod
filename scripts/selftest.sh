@@ -3,8 +3,8 @@
 #
 #   scripts/selftest.sh <srcds-dir> [map]
 #
-# <srcds-dir>: "Source SDK Base 2013 Dedicated Server" (app 244310), e.g.
-#   steamcmd +force_install_dir ~/srcds +login anonymous +app_update 244310 +quit
+# <srcds-dir>: HL2DM dedicated server (app 232370; same engine branch as the SDK), e.g.
+#   steamcmd +force_install_dir ~/srcds +login anonymous +app_update 232370 +quit
 # with the packaged mod copied in as <srcds-dir>/hl2dm_portal (scripts/package.sh).
 # Exit code 0 only if every PORTALTEST passed.
 set -uo pipefail
@@ -42,7 +42,7 @@ export LD_LIBRARY_PATH="$SRCDS/bin/linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 sed -i 's/|appid_243750|/|all_source_engine_paths|/g' "$SRCDS/hl2dm_portal/gameinfo.txt"
 
 echo ">> srcds64 -game hl2dm_portal +map $MAP"
-ARGS=( -game hl2dm_portal -console -norestart -nobreakpad -insecure
+ARGS=( -game hl2dm_portal -console -condebug -norestart -nobreakpad -insecure
     +sv_lan 1 +maxplayers 4 +sv_portal_selftest 1 +path +map "$MAP" )
 if command -v gdb > /dev/null; then
     # Under gdb so a crash prints a backtrace into the log.
@@ -54,6 +54,14 @@ fi
 echo ">> server exited ($?)"
 
 grep -E "PORTALTEST|SIGSEGV|Segmentation|crash|Couldn't|Failed to load|error|^#[0-9]" "$LOG" | head -80 || true
+
+# Engine console output (-condebug).
+CONLOG="$SRCDS/hl2dm_portal/console.log"
+if [[ -f "$CONLOG" ]]; then
+    echo ">> console.log (last 60 lines):"
+    tail -60 "$CONLOG"
+    cat "$CONLOG" >> "$LOG"
+fi
 
 if ! grep -q "PORTALTEST DONE" "$LOG"; then
     echo ">> self-test did not finish. Last 80 lines:"

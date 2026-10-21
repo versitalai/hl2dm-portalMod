@@ -23,7 +23,7 @@ jobs:
           sudo dpkg --add-architecture i386 && sudo apt-get update -qq && sudo apt-get install -y -qq lib32gcc-s1 lib32stdc++6 gdb > /dev/null
           mkdir -p ~/steamcmd && cd ~/steamcmd
           curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar xz
-          for i in 1 2 3; do ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 244310 +quit && break; done
+          for i in 1 2 3; do ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 232370 +quit && break; done
           nm -D "$HOME/srcds/bin/linux64/dedicated_srv.so" | grep -i "main" | head
           head -60 "$HOME/srcds/srcds_run" | grep -n "64\|BIN\|LD_LIBRARY" | head -20
       - name: Assemble mod

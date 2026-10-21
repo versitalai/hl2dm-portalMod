@@ -65,7 +65,7 @@ jobs:
           if-no-files-found: error
 
   # Runs the mod on a real dedicated server (Source SDK Base 2013 Dedicated
-  # Server, anonymous steamcmd download) and checks portal behavior in-engine.
+  # Server... HL2DM dedicated server 232370, anonymous steamcmd download) and checks portal behavior in-engine.
   selftest:
     needs: linux
     runs-on: ubuntu-latest
@@ -84,7 +84,7 @@ jobs:
           curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar xz
           # First run updates steamcmd itself and can exit non-zero; retry.
           for i in 1 2 3; do
-            ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 244310 validate +quit && break
+            ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 232370 validate +quit && break
           done
           ls "$HOME/srcds"
       - name: Assemble mod
