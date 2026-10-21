@@ -15,7 +15,7 @@
 	#include "viewrender.h"
 	#include "view.h"
 #else
-	#include "player_pickup.h"
+	#include "hl2_player.h"
 	#include "vphysics/player_controller.h"
 #endif
 
@@ -88,8 +88,11 @@ CHL2MPPortal::CHL2MPPortal()
 	m_iPortalType = HL2MP_PORTAL_BLUE;
 	m_hLinkedPortal = NULL;
 #ifdef CLIENT_DLL
-	m_iViewSlot = -1;
-	m_iViewFrame = -1;
+	for ( int i = 0; i < HL2MP_PORTAL_MAX_DEPTH; i++ )
+	{
+		m_iViewSlot[i] = -1;
+		m_iViewStamp[i] = -1;
+	}
 #endif
 	s_HL2MPPortals.AddToTail( this );
 }
@@ -195,7 +198,7 @@ CHL2MPPortal *CHL2MPPortal::FindPortalAtSurface( const Vector &vPoint, const Vec
 
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut,
-	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath )
+	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath, ITraceFilter *pFilterAfterPortal )
 {
 	if ( pPath )
 	{
@@ -224,6 +227,12 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 		else
 		{
 			UTIL_TraceLine( vStart, vEnd, mask, pFilter, pTrace );
+		}
+
+		if ( nPortals == 0 && pFilterAfterPortal )
+		{
+			// Every segment after the first uses the other filter.
+			pFilter = pFilterAfterPortal;
 		}
 
 		if ( pPath )
@@ -277,6 +286,18 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 //=============================================================================
 #ifdef GAME_DLL
 
+static CUtlVector<EHANDLE> s_TeleportLog;
+
+bool CHL2MPPortal::WasTeleported( CBaseEntity *pEntity )
+{
+	for ( int i = 0; i < s_TeleportLog.Count(); i++ )
+	{
+		if ( s_TeleportLog[i] == pEntity )
+			return true;
+	}
+	return false;
+}
+
 // Per-entity teleport cooldown, keyed by edict index + handle serial.
 static float s_flPortalNextTeleport[MAX_EDICTS];
 static int s_iPortalSerial[MAX_EDICTS];
@@ -317,6 +338,32 @@ static void GetPortalEntityVelocity( CBaseEntity *pEntity, Vector *pVelocity, An
 	else
 	{
 		*pVelocity = pEntity->GetAbsVelocity();
+	}
+}
+
+extern CBaseEntity *PhysCannonGetHeldEntity( CBaseCombatWeapon *pActiveWeapon );
+
+// Make whoever holds pEntity (gravity gun or +use) let go of it. HL2's
+// Pickup_ForcePlayerToDropThisObject uses UTIL_GetLocalPlayer(), which is NULL
+// in multiplayer (crashed when a held prop reached a portal).
+static void PortalForceDropHeldObject( CBaseEntity *pEntity )
+{
+	IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
+	if ( !pPhys || !( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
+		return;
+
+	for ( int i = 1; i <= gpGlobals->maxClients; i++ )
+	{
+		CHL2_Player *pPlayer = static_cast<CHL2_Player *>( UTIL_PlayerByIndex( i ) );
+		if ( !pPlayer )
+			continue;
+
+		// ForceDropOfCarriedPhysObjects drops whatever the player holds, so
+		// only call it on the holder.
+		if ( pPlayer->IsHoldingEntity( pEntity ) || PhysCannonGetHeldEntity( pPlayer->GetActiveWeapon() ) == pEntity )
+		{
+			pPlayer->ForceDropOfCarriedPhysObjects( pEntity );
+		}
 	}
 }
 
@@ -647,7 +694,7 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity )
 	}
 
 	// Gravity-gunned objects get dropped; the holder can't follow them.
-	Pickup_ForcePlayerToDropThisObject( pEntity );
+	PortalForceDropHeldObject( pEntity );
 
 	Vector vNewOrigin = vNewCenter - vOffset;
 	pEntity->Teleport( &vNewOrigin, &angNew, &vNewVelocity );
@@ -668,6 +715,12 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity )
 	}
 
 	PortalStartCooldown( pEntity );
+
+	s_TeleportLog.AddToTail( pEntity );
+	if ( s_TeleportLog.Count() > 64 )
+	{
+		s_TeleportLog.Remove( 0 );
+	}
 
 	if ( sv_portal_debug.GetBool() )
 	{
@@ -753,7 +806,9 @@ void CHL2MPPortal::AddPortalsToPVS( unsigned char *pvs, int pvssize )
 #ifdef CLIENT_DLL
 
 bool g_bRenderingHL2MPPortalView = false;
-VMatrix g_matHL2MPPortalWorldToProjection;
+int g_iHL2MPPortalRenderDepth = 0;
+VMatrix g_matHL2MPPortalWorldToProjection[HL2MP_PORTAL_MAX_DEPTH];
+int g_iHL2MPPortalViewStamp[HL2MP_PORTAL_MAX_DEPTH] = { 0 };
 float g_flHL2MPPortalUScale = 1.0f;
 float g_flHL2MPPortalVScale = 1.0f;
 
@@ -763,6 +818,8 @@ const char *HL2MPPortal_GetRenderTargetName( int iSlot )
 	{
 		"_rt_HL2MPPortal0",
 		"_rt_HL2MPPortal1",
+		"_rt_HL2MPPortal2",
+		"_rt_HL2MPPortal3",
 	};
 
 	if ( iSlot < 0 || iSlot >= HL2MP_PORTAL_MAX_VIEWS )
@@ -866,7 +923,7 @@ static void ComputePortalVertex( const Vector &vCenter, const Vector &vRight, co
 	if ( bScreenUV )
 	{
 		Vector4D vClip;
-		g_matHL2MPPortalWorldToProjection.V4Mul( Vector4D( out.vPos.x, out.vPos.y, out.vPos.z, 1.0f ), vClip );
+		g_matHL2MPPortalWorldToProjection[g_iHL2MPPortalRenderDepth].V4Mul( Vector4D( out.vPos.x, out.vPos.y, out.vPos.z, 1.0f ), vClip );
 		float flW = MAX( vClip.w, 0.001f );
 		out.u = ( 0.5f + 0.5f * vClip.x / flW ) * g_flHL2MPPortalUScale;
 		out.v = ( 0.5f - 0.5f * vClip.y / flW ) * g_flHL2MPPortalVScale;
@@ -1003,13 +1060,19 @@ int C_HL2MPPortal::DrawModel( int flags )
 	if ( DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward ) < 0.0f )
 		return 0;
 
-	bool bHasView = IsOpen() && !g_bRenderingHL2MPPortalView && CurrentViewID() == VIEW_MAIN &&
-		m_iViewFrame == gpGlobals->framecount && m_iViewSlot >= 0 && GetPortalViewMaterial( m_iViewSlot );
+	// A live view exists for this portal at this depth if one was rendered
+	// for the view being drawn (main view, or the portal view it's inside).
+	int iDepth = g_iHL2MPPortalRenderDepth;
+	view_id_t viewID = CurrentViewID();
+	bool bRightView = ( iDepth == 0 ) ? ( viewID == VIEW_MAIN ) : ( viewID == VIEW_MONITOR );
+	int iSlot = ( iDepth < HL2MP_PORTAL_MAX_DEPTH ) ? m_iViewSlot[iDepth] : -1;
+	bool bHasView = IsOpen() && bRightView && iDepth < HL2MP_PORTAL_MAX_DEPTH &&
+		m_iViewStamp[iDepth] == g_iHL2MPPortalViewStamp[iDepth] && GetPortalViewMaterial( iSlot );
 
 	if ( bHasView )
 	{
 		color32 white = { 255, 255, 255, 255 };
-		DrawPortalFill( GetPortalViewMaterial( m_iViewSlot ), vCenter, vRight, vUp, true, white );
+		DrawPortalFill( GetPortalViewMaterial( iSlot ), vCenter, vRight, vUp, true, white );
 	}
 	else
 	{
