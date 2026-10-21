@@ -369,6 +369,20 @@ index 052e3a7..6294b92 100644
  	bool			DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_PointCamera *pCameraEnt, const CViewSetup &cameraView, C_BasePlayer *localPlayer, 
  						int x, int y, int width, int height );
  
+diff --git a/src/game/server/gameinterface.cpp b/src/game/server/gameinterface.cpp
+index eb99cdf..9a8bb03 100644
+--- a/src/game/server/gameinterface.cpp
++++ b/src/game/server/gameinterface.cpp
+@@ -1880,6 +1880,9 @@ IServerGCLobby *CServerGameDLL::GetServerGCLobby()
+ {
+ #ifdef TF_DLL
+ 	return GTFGCClientSystem();
++#elif defined( HL2MP )
++	extern IServerGCLobby *HL2MPPortal_GetSelfTestLobby();
++	return HL2MPPortal_GetSelfTestLobby();
+ #else	
+ 	return NULL;
+ #endif
 diff --git a/src/game/server/hl2mp/grenade_tripmine.cpp b/src/game/server/hl2mp/grenade_tripmine.cpp
 index e14a929..c9e3fb6 100644
 --- a/src/game/server/hl2mp/grenade_tripmine.cpp

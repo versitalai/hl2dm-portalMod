@@ -335,3 +335,39 @@ private:
 };
 
 static CHL2MPPortalSelfTest g_HL2MPPortalSelfTest;
+
+//-----------------------------------------------------------------------------
+// Purpose: An empty dedicated server hibernates (no game frames), and HL2MP
+//			has no sv_hibernate_when_empty. The engine asks the game's GC lobby
+//			whether to hibernate, so keep the server awake during the self-test.
+//-----------------------------------------------------------------------------
+class CHL2MPSelfTestLobby : public IServerGCLobby
+{
+public:
+	CHL2MPSelfTestLobby() : m_bLogged( false ) {}
+
+	virtual bool HasLobby() const { return sv_portal_selftest.GetBool(); }
+	virtual bool SteamIDAllowedToConnect( const CSteamID &steamId ) const { return true; }
+	virtual void UpdateServerDetails( void ) {}
+	virtual bool ShouldHibernate()
+	{
+		if ( !m_bLogged && sv_portal_selftest.GetBool() )
+		{
+			Msg( "PORTALTEST info engine asked to hibernate, staying awake\n" );
+			m_bLogged = true;
+		}
+		return !sv_portal_selftest.GetBool();
+	}
+	virtual bool MatchAllowsNameChanges() { return true; }
+	virtual bool GetPlayerGCMatchName( const CSteamID &steamId, char *pszOutGCMatchName, size_t nGCMatchNameLen ) { return false; }
+
+private:
+	bool m_bLogged;
+};
+
+static CHL2MPSelfTestLobby g_HL2MPSelfTestLobby;
+
+IServerGCLobby *HL2MPPortal_GetSelfTestLobby()
+{
+	return &g_HL2MPSelfTestLobby;
+}

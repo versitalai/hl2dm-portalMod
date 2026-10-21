@@ -47,7 +47,7 @@ sed -i 's/|appid_243750|/|all_source_engine_paths|/g' "$SRCDS/hl2dm_portal/gamei
 
 echo ">> srcds64 -game hl2dm_portal +map $MAP"
 ARGS=( -game hl2dm_portal -console -condebug -norestart -nobreakpad -insecure
-    +sv_lan 1 +maxplayers 4 +sv_hibernate_when_empty 0 +sv_portal_selftest 1 +map "$MAP" )
+    +sv_lan 1 +maxplayers 4 +sv_portal_selftest 1 +map "$MAP" )
 if command -v gdb > /dev/null; then
     # Under gdb so a crash prints a backtrace into the log.
     timeout 300 gdb -batch -ex "set pagination off" -ex run -ex bt -ex "info sharedlibrary" \
