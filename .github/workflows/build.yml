@@ -88,13 +88,87 @@ jobs:
           else VERSION="${GITHUB_SHA::7}"; fi
           scripts/package.sh sdk "$VERSION"
           echo "ZIP=$(ls dist/*.zip)" >> "$GITHUB_ENV"
+      - name: Test Linux installer
+        run: |
+          mkdir -p "$RUNNER_TEMP/Steam/steamapps"
+          dist/stage/install.sh --steam-dir "$RUNNER_TEMP/Steam"
+          test -f "$RUNNER_TEMP/Steam/steamapps/sourcemods/hl2dm_portal/bin/linux64/client.so"
+          test -f "$RUNNER_TEMP/Steam/steamapps/sourcemods/hl2dm_portal/gameinfo.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: hl2dm_portal
           path: dist/stage/
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ env.ZIP }}
+
+  # Runs install.bat for real: fresh install, reinstall over a briefly locked
+  # DLL (the "sharing violation" case), and a DLL that stays locked.
+  test-windows-installer:
+    needs: package
+    runs-on: windows-2022
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hl2dm_portal
+          path: pkg
+      - name: Test install.bat
+        shell: pwsh
+        env:
+          HL2DM_NO_PAUSE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $steam = Join-Path $env:RUNNER_TEMP 'Steam'
+          New-Item -ItemType Directory -Force "$steam\steamapps" | Out-Null
+          $dll = "$steam\steamapps\sourcemods\hl2dm_portal\bin\x64\client.dll"
+          $src = (Resolve-Path 'pkg\hl2dm_portal\bin\x64\client.dll').Path
+
+          function Run-Install {
+            cmd /c "pkg\install.bat `"$steam`"" | Out-Host
+            return $LASTEXITCODE
+          }
+          function Lock-For($seconds) {
+            $j = Start-Job -ArgumentList $dll, $seconds {
+              param($p, $s)
+              $f = [System.IO.File]::Open($p, 'Open', 'ReadWrite', 'None')
+              Start-Sleep $s
+              $f.Close()
+            }
+            Start-Sleep 3
+            return $j
+          }
+
+          Write-Host '== fresh install'
+          if ((Run-Install) -ne 0) { throw 'fresh install failed' }
+          if (-not (Test-Path $dll)) { throw 'client.dll not installed' }
+
+          Write-Host '== reinstall while client.dll is locked for 8 s (retries should win)'
+          (Get-Item $src).LastWriteTime = Get-Date
+          $j = Lock-For 8
+          if ((Run-Install) -ne 0) { throw 'reinstall over a briefly locked file failed' }
+          Wait-Job $j | Out-Null
+          if ((Get-Item $dll).LastWriteTime -lt (Get-Item $src).LastWriteTime.AddSeconds(-2)) { throw 'client.dll not updated' }
+
+          Write-Host '== client.dll stays locked (must fail cleanly, not hang)'
+          (Get-Item $src).LastWriteTime = (Get-Date).AddMinutes(1)
+          $j = Lock-For 60
+          if ((Run-Install) -eq 0) { throw 'install should have failed while the file was locked' }
+          Stop-Job $j; Remove-Job $j -Force
+          Write-Host 'install.bat OK'
+
+  release:
+    needs: [package, test-windows-installer]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: dist
+      - name: Find zip
+        run: echo "ZIP=$(ls dist/*.zip)" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
         with:
           # Creates the tag on this commit when it doesn't exist yet.
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}

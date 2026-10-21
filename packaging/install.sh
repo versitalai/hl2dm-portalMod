@@ -38,7 +38,9 @@ else
     echo ">> Installing to $DEST"
 fi
 mkdir -p "$DEST"
-cp -r "$HERE/$MOD/." "$DEST/"
+# Replace files instead of writing into them: a running game has the .so files
+# mapped, and overwriting them in place can crash it.
+cp -r --remove-destination "$HERE/$MOD/." "$DEST/"
 
 if ! ls "$STEAM_DIR"/steamapps/appmanifest_243750.acf >/dev/null 2>&1; then
     echo "!! 'Source SDK Base 2013 Multiplayer' doesn't look installed in this library."

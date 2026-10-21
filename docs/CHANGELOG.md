@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.2 — 2026-10-21
+
+### Fixed
+- `install.bat` failed with "sharing violation" when reinstalling while the game was running (it has
+  `bin\x64\client.dll`/`server.dll` open). It now detects a running game and asks to close it, and copies with
+  robocopy, retrying locked files (10 x 2 s) with a clear retry prompt instead of aborting.
+- `install.sh` replaces files instead of overwriting them in place, so a running game can't crash on reinstall.
+
+### Added
+- CI tests `install.bat` on Windows: fresh install, reinstall over a briefly locked DLL, and a DLL that stays
+  locked (must fail cleanly). Also tests `install.sh`. Releases publish only after these pass.
+
 ## 0.3.1 — 2026-10-21
 
 ### Fixed
