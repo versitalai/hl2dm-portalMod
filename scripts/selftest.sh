@@ -25,10 +25,12 @@ fi
 if [[ ! -f "$SRCDS/bin/linux64/libsteam_api.so" ]]; then
     cp "$REPO_ROOT/sdk/game/bin/linux64/libsteam_api.so" "$SRCDS/bin/linux64/" || exit 1
 fi
-# Mod server.so links libtier0.so/libvstdlib.so; the dedicated server names
-# its 64-bit copies *_srv.so.
-for lib in tier0 vstdlib; do
-    [[ -e "$SRCDS/bin/linux64/lib$lib.so" ]] || ln -s "lib${lib}_srv.so" "$SRCDS/bin/linux64/lib$lib.so"
+# The mod's server.so is built for listen servers, so it links and loads
+# engine modules by their plain names (libtier0.so, soundemittersystem.so...);
+# the dedicated server ships its 64-bit copies as *_srv.so.
+for f in "$SRCDS"/bin/linux64/*_srv.so; do
+    plain="${f%_srv.so}.so"
+    [[ -e "$plain" ]] || ln -s "$(basename "$f")" "$plain"
 done
 # The 64-bit dedicated server loads the game DLL as server_srv.so.
 [[ -e "$SRCDS/hl2dm_portal/bin/linux64/server_srv.so" ]] || ln -s server.so "$SRCDS/hl2dm_portal/bin/linux64/server_srv.so"
