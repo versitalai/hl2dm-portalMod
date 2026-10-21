@@ -37,6 +37,7 @@ public:
 
 	CWeaponPortalGun( void );
 
+	virtual void	ItemPostFrame( void );
 	virtual void	PrimaryAttack( void );
 	virtual void	SecondaryAttack( void );
 	virtual bool	Reload( void );
@@ -89,6 +90,35 @@ CWeaponPortalGun::CWeaponPortalGun( void )
 {
 	m_bReloadsSingly = false;
 	m_bFiresUnderwater = true;
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: The gun has no ammo. The stock ItemPostFrame treats that as empty
+//			(primary goes to HandleFireOnEmpty) and only reloads clip weapons,
+//			so handle the buttons here, like the gravity gun does.
+//-----------------------------------------------------------------------------
+void CWeaponPortalGun::ItemPostFrame( void )
+{
+	CBasePlayer *pOwner = ToBasePlayer( GetOwner() );
+	if ( !pOwner )
+		return;
+
+	if ( ( pOwner->m_nButtons & IN_ATTACK ) && m_flNextPrimaryAttack <= gpGlobals->curtime )
+	{
+		PrimaryAttack();
+	}
+	else if ( ( pOwner->m_nButtons & IN_ATTACK2 ) && m_flNextSecondaryAttack <= gpGlobals->curtime )
+	{
+		SecondaryAttack();
+	}
+	else if ( pOwner->m_afButtonPressed & IN_RELOAD )
+	{
+		Reload();
+	}
+	else if ( !( pOwner->m_nButtons & ( IN_ATTACK | IN_ATTACK2 | IN_RELOAD ) ) )
+	{
+		WeaponIdle();
+	}
 }
 
 void CWeaponPortalGun::PrimaryAttack( void )
