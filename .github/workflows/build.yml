@@ -1,0 +1,90 @@
+# Builds Linux (Steam Runtime) + Windows binaries and packages the ready-to-play zip.
+# Every push: zip uploaded as a workflow artifact. Tag v*: also published as a GitHub Release.
+name: build
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    # Same image the SDK's buildallprojects uses, so binaries run on players' Steam Runtime.
+    container: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch SDK and apply mod
+        run: scripts/setup.sh
+      - name: Build
+        run: scripts/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-linux64
+          path: |
+            sdk/game/mod_hl2mp/bin/linux64/client.so
+            sdk/game/mod_hl2mp/bin/linux64/server.so
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: microsoft/setup-msbuild@v2
+      - name: Fetch SDK and apply mod
+        shell: bash
+        run: scripts/setup.sh
+      - name: Generate solution
+        shell: cmd
+        working-directory: sdk/src
+        run: devtools\bin\vpc.exe /hl2mp /define:SOURCESDK +everything /mksln hl2mp.sln
+      - name: Build
+        shell: cmd
+        working-directory: sdk/src
+        run: msbuild hl2mp.sln /m /p:Configuration=Release /v:minimal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-x64
+          path: |
+            sdk/game/mod_hl2mp/bin/x64/client.dll
+            sdk/game/mod_hl2mp/bin/x64/server.dll
+          if-no-files-found: error
+
+  package:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch SDK (game content) and apply mod
+        run: scripts/setup.sh
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-linux64
+          path: sdk/game/mod_hl2mp/bin/linux64
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-x64
+          path: sdk/game/mod_hl2mp/bin/x64
+      - name: Package
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then VERSION="${GITHUB_REF_NAME}"; else VERSION="${GITHUB_SHA::7}"; fi
+          scripts/package.sh sdk "$VERSION"
+          echo "ZIP=$(ls dist/*.zip)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hl2dm_portal
+          path: dist/stage/
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ZIP }}
+          generate_release_notes: true
