@@ -87,7 +87,7 @@ Visual Studio 2022 and build (DLLs land in `sdk\game\mod_hl2mp\bin\x64`).
 
 **CI** (`.github/workflows/build.yml`) builds Linux inside the Steam Runtime "sniper" container (what Valve requires
 for distributed Linux binaries) and Windows with MSVC, then packages both into one zip. Every push uploads it as an
-artifact; pushing a `v*` tag publishes a Release.
+artifact; pushing a `v*` tag publishes a Release, or use **Actions → build → Run workflow** with `release_tag` (no git tag needed).
 
 ## Working on the code
 

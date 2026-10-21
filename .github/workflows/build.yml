@@ -1,5 +1,6 @@
 # Builds Linux (Steam Runtime) + Windows binaries and packages the ready-to-play zip.
 # Every push: zip uploaded as a workflow artifact. Tag v*: also published as a GitHub Release.
+# Or Actions > build > Run workflow with release_tag (e.g. v0.3.0): builds that commit and creates tag + Release.
 name: build
 
 on:
@@ -8,6 +9,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Publish a Release with this new tag (e.g. v0.3.0). Empty = build only.'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -74,8 +80,12 @@ jobs:
           name: bin-x64
           path: sdk/game/mod_hl2mp/bin/x64
       - name: Package
+        env:
+          RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then VERSION="${GITHUB_REF_NAME}"; else VERSION="${GITHUB_SHA::7}"; fi
+          if [[ -n "$RELEASE_TAG" ]]; then VERSION="$RELEASE_TAG"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then VERSION="${GITHUB_REF_NAME}"
+          else VERSION="${GITHUB_SHA::7}"; fi
           scripts/package.sh sdk "$VERSION"
           echo "ZIP=$(ls dist/*.zip)" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
@@ -83,8 +93,12 @@ jobs:
           name: hl2dm_portal
           path: dist/stage/
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
+          # Creates the tag on this commit when it doesn't exist yet.
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: HL2DM Portal ${{ github.event.inputs.release_tag || github.ref_name }}
           files: ${{ env.ZIP }}
           generate_release_notes: true
