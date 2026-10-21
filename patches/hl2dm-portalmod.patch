@@ -690,3 +690,173 @@ index bf44dc1..acfd868 100644
  	}
  #endif
  
+diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
+index e54f63d..6c68263 100644
+--- a/src/game/shared/hl2/hl_gamemovement.cpp
++++ b/src/game/shared/hl2/hl_gamemovement.cpp
+@@ -9,6 +9,13 @@
+ #include "utlrbtree.h"
+ #include "hl2_shareddefs.h"
+ 
++#ifdef HL2MP
++#include "hl2mp_portal.h"
++#ifdef CLIENT_DLL
++#include "prediction.h"
++#endif
++#endif
++
+ #ifdef HL2MP
+ #ifdef CLIENT_DLL
+ #include "hl2mp/c_hl2mp_player.h"
+@@ -529,6 +536,112 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+ 	BaseClass::ProcessMovement( pPlayer, pMove );
+ }
+ 
++#ifdef HL2MP
++void CHL2GameMovement::TracePlayerBBox( const Vector& start, const Vector& end, unsigned int fMask, int collisionGroup, trace_t& pm )
++{
++	if ( !UTIL_HL2MPPortal_TracePlayerHull( start, end, GetPlayerMins(), GetPlayerMaxs(), fMask, mv->m_nPlayerHandle.Get(), collisionGroup, pm ) )
++	{
++		BaseClass::TracePlayerBBox( start, end, fMask, collisionGroup, pm );
++	}
++}
++
++void CHL2GameMovement::TryTouchGround( const Vector& start, const Vector& end, const Vector& mins, const Vector& maxs, unsigned int fMask, int collisionGroup, trace_t& pm )
++{
++	if ( !UTIL_HL2MPPortal_TracePlayerHull( start, end, mins, maxs, fMask, mv->m_nPlayerHandle.Get(), collisionGroup, pm ) )
++	{
++		BaseClass::TryTouchGround( start, end, mins, maxs, fMask, collisionGroup, pm );
++	}
++}
++
++CBaseHandle CHL2GameMovement::TestPlayerPosition( const Vector& pos, int collisionGroup, trace_t& pm )
++{
++	if ( !UTIL_HL2MPPortal_TracePlayerHull( pos, pos, GetPlayerMins(), GetPlayerMaxs(), PlayerSolidMask(), mv->m_nPlayerHandle.Get(), collisionGroup, pm ) )
++	{
++		return BaseClass::TestPlayerPosition( pos, collisionGroup, pm );
++	}
++
++	if ( ( pm.startsolid || pm.allsolid ) && ( pm.contents & PlayerSolidMask() ) && pm.m_pEnt )
++	{
++		return pm.m_pEnt->GetRefEHandle();
++	}
++	return INVALID_EHANDLE;
++}
++
++// Floor portals launch you at least this fast, so walking into a wall portal
++// whose partner is on the floor doesn't drop you straight back in.
++#define PORTAL_MIN_UPWARD_EXIT_SPEED	250.0f
++
++void CHL2GameMovement::PlayerMove( void )
++{
++	Vector vecEyeStart = mv->GetAbsOrigin() + player->GetViewOffset();
++
++	BaseClass::PlayerMove();
++
++	if ( player->GetMoveType() != MOVETYPE_WALK )
++		return;
++
++	Vector vecEye = mv->GetAbsOrigin() + player->GetViewOffset();
++	CHL2MPPortal *pPortal = UTIL_HL2MPPortal_FindPlayerTransition( mv->GetAbsOrigin(), GetPlayerMins(), GetPlayerMaxs(), vecEyeStart, vecEye );
++	if ( !pPortal )
++		return;
++
++	CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
++	VMatrix matToLinked = pPortal->MatrixThisToLinked();
++
++	// The hull never rotates, so carry its center through and rebuild the origin.
++	Vector vecMid = ( GetPlayerMins() + GetPlayerMaxs() ) * 0.5f;
++	Vector vecOrigin = matToLinked.VMul4x3( mv->GetAbsOrigin() + vecMid ) - vecMid;
++
++	Vector vecVelocity = matToLinked.VMul3x3( mv->m_vecVelocity );
++	Vector vecExitNormal = pLinked->GetSurfaceNormal();
++	if ( vecExitNormal.z > 0.7f )
++	{
++		float flOut = DotProduct( vecVelocity, vecExitNormal );
++		if ( flOut < PORTAL_MIN_UPWARD_EXIT_SPEED )
++		{
++			vecVelocity += vecExitNormal * ( PORTAL_MIN_UPWARD_EXIT_SPEED - flOut );
++		}
++	}
++
++	// If the hull can't sit there (doesn't fit the exit hole), push it out of the exit.
++	trace_t tr;
++	if ( TestPlayerPosition( vecOrigin, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) != INVALID_EHANDLE )
++	{
++		Vector vecHalf = ( GetPlayerMaxs() - GetPlayerMins() ) * 0.5f;
++		float flExtent = fabs( vecExitNormal.x ) * vecHalf.x + fabs( vecExitNormal.y ) * vecHalf.y + fabs( vecExitNormal.z ) * vecHalf.z;
++		float flDepth = DotProduct( vecExitNormal, vecOrigin + vecMid - pLinked->GetAbsOrigin() );
++		vecOrigin += vecExitNormal * ( flExtent + 1.0f - flDepth );
++	}
++
++	// View turns with the portal; roll dropped.
++	Vector vecForward;
++	AngleVectors( mv->m_vecViewAngles, &vecForward );
++	QAngle angView;
++	VectorAngles( matToLinked.VMul3x3( vecForward ), angView );
++	angView.x = clamp( AngleNormalize( angView.x ), -89.0f, 89.0f );
++	angView.z = 0.0f;
++
++	mv->SetAbsOrigin( vecOrigin );
++	mv->m_vecVelocity = vecVelocity;
++	mv->m_vecViewAngles = angView;
++	mv->m_vecAbsViewAngles = angView;
++	mv->m_vecAngles = angView;
++	SetGroundEntity( NULL );
++
++#ifdef CLIENT_DLL
++	// Turn the local view once; repredicted commands already carry the new angles.
++	if ( prediction->IsFirstTimePredicted() && player->IsLocalPlayer() )
++	{
++		engine->SetViewAngles( angView );
++	}
++#else
++	player->SetLocalAngles( angView );
++	player->pl.v_angle = angView;
++	player->IncrementInterpolationFrame();
++#endif
++}
++#endif // HL2MP
++
+ void CHL2GameMovement::CheckParameters( void )
+ {
+ #if defined( HL2_DLL ) || defined( HL2_CLIENT_DLL )
+diff --git a/src/game/shared/hl2/hl_gamemovement.h b/src/game/shared/hl2/hl_gamemovement.h
+index fe50736..b667e34 100644
+--- a/src/game/shared/hl2/hl_gamemovement.h
++++ b/src/game/shared/hl2/hl_gamemovement.h
+@@ -49,6 +49,15 @@ public:
+ 
+ 	virtual float MaxSpeed();
+ 
++#ifdef HL2MP
++	// Portal mod: players can move into portals and go through when their eye
++	// crosses the plane (see UTIL_HL2MPPortal_TracePlayerHull).
++	virtual void TracePlayerBBox( const Vector& start, const Vector& end, unsigned int fMask, int collisionGroup, trace_t& pm ) OVERRIDE;
++	virtual void TryTouchGround( const Vector& start, const Vector& end, const Vector& mins, const Vector& maxs, unsigned int fMask, int collisionGroup, trace_t& pm ) OVERRIDE;
++	virtual CBaseHandle TestPlayerPosition( const Vector& pos, int collisionGroup, trace_t& pm ) OVERRIDE;
++	virtual void PlayerMove( void ) OVERRIDE;
++#endif
++
+ private:
+ 
+ 	// See if we are pressing use near a ladder "mount" point and if so, latch us onto the ladder
+diff --git a/src/game/shared/props_shared.cpp b/src/game/shared/props_shared.cpp
+index 4c21656..351a66a 100644
+--- a/src/game/shared/props_shared.cpp
++++ b/src/game/shared/props_shared.cpp
+@@ -21,7 +21,14 @@
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+ 
++#ifdef HL2MP
++// Portal mod: no client-side-only props. The server can't move props it
++// doesn't have, so small props sat frozen over portals until a client touched
++// them (and each player had their own copy anyway).
++ConVar sv_pushaway_clientside_size( "sv_pushaway_clientside_size", "0", FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "Minimum size of pushback objects" );
++#else
+ ConVar sv_pushaway_clientside_size( "sv_pushaway_clientside_size", "15", FCVAR_REPLICATED | FCVAR_DEVELOPMENTONLY, "Minimum size of pushback objects" );
++#endif
+ ConVar props_break_max_pieces( "props_break_max_pieces", "-1", 0, "Maximum prop breakable piece count (-1 = model default)" );
+ ConVar props_break_max_pieces_perframe( "props_break_max_pieces_perframe", "-1", FCVAR_REPLICATED, "Maximum prop breakable piece count per frame (-1 = model default)" );
+ #ifdef GAME_DLL

@@ -194,6 +194,8 @@ jobs:
           if ((Run-Install) -eq 0) { throw 'install should have failed while the file was locked' }
           Stop-Job $j; Remove-Job $j -Force
           Write-Host 'install.bat OK'
+          # The last native exit code (the expected failure above) would fail the step.
+          exit 0
 
   release:
     needs: [package, test-windows-installer]

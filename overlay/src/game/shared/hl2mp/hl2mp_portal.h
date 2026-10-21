@@ -69,6 +69,15 @@ public:
 	// the front of this portal comes out of the front of the linked one.
 	VMatrix			MatrixThisToLinked() const;
 
+	// Portals whose normal lies along a world axis (almost all walls, floors,
+	// ceilings) let players move into them: the wall behind stops blocking and
+	// the player goes through when their eye crosses the plane. Returns the
+	// axis (0-2), the sign of the normal along it and the plane coordinate.
+	bool			GetPlaneAxis( int *pAxis, float *pSign, float *pDist ) const;
+	bool			CanCarve() const;
+	// Does a hull (world center, half size) fit through the hole for movement?
+	bool			HullFitsHole( const Vector &vecCenter, const Vector &vecHalf ) const;
+
 	// Is a point (near the portal plane) inside the ellipse? flScale grows/shrinks it.
 	bool			IsPointInEllipse( const Vector &vPoint, float flScale = 1.0f ) const;
 
@@ -133,6 +142,17 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut = NULL,
 	const Vector *pHullMins = NULL, const Vector *pHullMaxs = NULL, CHL2MPPortal *pIgnorePortal = NULL,
 	CUtlVector<Vector> *pPath = NULL, ITraceFilter *pFilterAfterPortal = NULL );
+
+// Player movement through portals. Shared so client prediction matches the
+// server. Trace a player hull that may be partly inside an open portal's hole:
+// the wall behind the hole doesn't block, the part through the hole collides
+// on the exit side. Returns false if no portal is involved (do a normal trace).
+bool UTIL_HL2MPPortal_TracePlayerHull( const Vector &vecStart, const Vector &vecEnd, const Vector &vecMins, const Vector &vecMaxs,
+	unsigned int mask, IHandleEntity *pIgnore, int collisionGroup, trace_t &pm );
+
+// The portal whose plane the eye crossed while moving from vecEyeStart to
+// vecEye (with the hull inside its hole), or NULL.
+CHL2MPPortal *UTIL_HL2MPPortal_FindPlayerTransition( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecEyeStart, const Vector &vecEye );
 
 #ifdef CLIENT_DLL
 // Set while a portal view is being rendered into a render target.

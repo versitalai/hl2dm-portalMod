@@ -14,6 +14,9 @@
 #include "hl2mp_portal.h"
 #include "weapon_rpg.h"
 #include "igamesystem.h"
+#include "hl2mp_player.h"
+#include "usercmd.h"
+#include "in_buttons.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -23,7 +26,14 @@ ConVar sv_portal_selftest( "sv_portal_selftest", "0", FCVAR_NONE, "Run the porta
 class CHL2MPPortalSelfTest : public CAutoGameSystemPerFrame
 {
 public:
-	CHL2MPPortalSelfTest() : CAutoGameSystemPerFrame( "CHL2MPPortalSelfTest" ) { m_iStep = -1; }
+	CHL2MPPortalSelfTest() : CAutoGameSystemPerFrame( "CHL2MPPortalSelfTest" )
+	{
+		m_iStep = -1;
+		m_bBotWalk = false;
+		m_nBotCommand = 0;
+		m_flBotClosest = FLT_MAX;
+		m_flNextBotLog = 0.0f;
+	}
 
 	virtual void LevelInitPostEntity()
 	{
@@ -34,7 +44,13 @@ public:
 
 	virtual void FrameUpdatePostEntityThink()
 	{
-		if ( m_iStep < 0 || gpGlobals->curtime < m_flNextStep )
+		if ( m_iStep < 0 )
+			return;
+
+		if ( m_hBot )
+			DriveBot();
+
+		if ( gpGlobals->curtime < m_flNextStep )
 			return;
 		RunStep();
 	}
@@ -117,6 +133,33 @@ private:
 		return flBest < FLT_MAX;
 	}
 
+	// Walk the bot forward along m_angBot every frame and track how close it
+	// gets to the exit portal.
+	void DriveBot()
+	{
+		CBasePlayer *pBot = ToBasePlayer( m_hBot );
+		if ( !pBot )
+			return;
+
+		CUserCmd cmd;
+		cmd.command_number = ++m_nBotCommand;
+		cmd.tick_count = gpGlobals->tickcount;
+		cmd.viewangles = m_angBot;
+		cmd.forwardmove = m_bBotWalk ? 200.0f : 0.0f;
+		cmd.buttons = m_bBotWalk ? IN_FORWARD : 0;
+		pBot->ProcessUsercmds( &cmd, 1, 1, 0, false );
+
+		float flDist = ( pBot->WorldSpaceCenter() - m_hFloor->GetAbsOrigin() ).Length();
+		m_flBotClosest = MIN( m_flBotClosest, flDist );
+
+		if ( gpGlobals->curtime > m_flNextBotLog )
+		{
+			m_flNextBotLog = gpGlobals->curtime + 0.25f;
+			Vector v = pBot->GetAbsOrigin();
+			Msg( "PORTALTEST info bot at (%.0f %.0f %.0f) vel %.0f dist_to_exit %.0f\n", v.x, v.y, v.z, pBot->GetAbsVelocity().Length(), flDist );
+		}
+	}
+
 	void RunStep()
 	{
 		switch ( m_iStep++ )
@@ -137,6 +180,17 @@ private:
 
 			Result( "place_wall", m_hWall->PlaceOnSurface( m_vecWall, m_vecWallNormal, -m_vecWallNormal ) );
 
+			// Small map props must stay server-side (stock HL2MP makes them
+			// client-only, which the server can't move through portals).
+			{
+				CBaseEntity *pCan = CreateEntityByName( "prop_physics_multiplayer" );
+				pCan->SetAbsOrigin( m_vecFloor + Vector( 48, 0, 16 ) );
+				pCan->KeyValue( "model", "models/props_junk/popcan01a.mdl" );
+				pCan->Precache();
+				DispatchSpawn( pCan );
+				m_hCan = pCan;
+			}
+
 			// A prop resting where the floor portal will open.
 			m_hProp = CreateProp( m_vecFloor + Vector( 0, 0, 24 ) );
 			Wait( 5.0f );	// let it settle and fall asleep
@@ -144,6 +198,8 @@ private:
 
 		case 1:
 		{
+			Result( "small_props_server_side", m_hCan.Get() != NULL && !m_hCan->IsMarkedForDeletion() );
+
 			IPhysicsObject *pPhys = m_hProp ? m_hProp->VPhysicsGetObject() : NULL;
 			m_vecPropStart = m_hProp ? m_hProp->GetAbsOrigin() : vec3_origin;
 			Msg( "PORTALTEST info prop asleep=%d\n", pPhys ? pPhys->IsAsleep() : -1 );
@@ -196,9 +252,51 @@ private:
 		}
 
 		case 4:
+		{
 			Result( "rocket_through_portal", m_hRocket && CHL2MPPortal::WasTeleported( m_hRocket ) );
+
+			// A player walking into the wall portal goes through in its own
+			// movement (no snap teleport) and comes out of the floor portal.
+			edict_t *pEdict = engine->CreateFakeClient( "PortalTestBot" );
+			CBasePlayer *pBot = pEdict ? ToBasePlayer( CBaseEntity::Instance( pEdict ) ) : NULL;
+			if ( !pBot )
+			{
+				Result( "player_walks_through", false, "couldn't create a bot" );
+				Finish();
+				return;
+			}
+			pBot->ClearFlags();
+			pBot->AddFlag( FL_CLIENT | FL_FAKECLIENT );
+			pBot->Spawn();
+
+			Vector vecStart = m_hWall->GetAbsOrigin() + m_vecWallNormal * 64;
+			trace_t tr;
+			UTIL_TraceHull( vecStart, vecStart - Vector( 0, 0, 256 ), VEC_HULL_MIN, VEC_HULL_MAX, MASK_PLAYERSOLID, pBot, COLLISION_GROUP_PLAYER_MOVEMENT, &tr );
+			vecStart = tr.endpos;
+			VectorAngles( -m_vecWallNormal, m_angBot );
+			pBot->Teleport( &vecStart, &m_angBot, &vec3_origin );
+			pBot->SnapEyeAngles( m_angBot );
+
+			Vector vecBottom = m_hWall->GetAbsOrigin() - Vector( 0, 0, HL2MP_PORTAL_HALF_HEIGHT );
+			Msg( "PORTALTEST info wall portal bottom z %.1f, bot feet z %.1f\n", vecBottom.z, vecStart.z );
+
+			m_hBot = pBot;
+			m_bBotWalk = true;
+			m_flBotClosest = FLT_MAX;
+			Wait( 3.0f );
+			return;
+		}
+
+		case 5:
+		{
+			bool bSnapped = CHL2MPPortal::WasTeleported( m_hBot );
+			Result( "player_walks_through", m_flBotClosest < 80.0f, "closest_to_exit=%.0f", m_flBotClosest );
+			Result( "player_through_seamless", m_flBotClosest < 80.0f && !bSnapped, "snap_teleported=%d", bSnapped );
+			m_bBotWalk = false;
+			m_hBot = NULL;
 			Finish();
 			return;
+		}
 		}
 	}
 
@@ -208,7 +306,13 @@ private:
 
 	Vector	m_vecFloor, m_vecWall, m_vecWallNormal, m_vecPropStart;
 	CHandle<CHL2MPPortal> m_hWall, m_hFloor;
-	EHANDLE	m_hProp, m_hHeldProp, m_hRocket;
+	EHANDLE	m_hBot;
+	QAngle	m_angBot;
+	bool	m_bBotWalk;
+	int		m_nBotCommand;
+	float	m_flBotClosest;
+	float	m_flNextBotLog;
+	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan;
 };
 
 static CHL2MPPortalSelfTest g_HL2MPPortalSelfTest;
