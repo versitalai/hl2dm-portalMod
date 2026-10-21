@@ -49,6 +49,7 @@ Built for it: HL2DM is multiplayer-only, and everything runs server-authoritativ
   the portal view.
 - Each client renders its own portal views (up to 2 per frame).
 
+## Controls
 
 | Input | Action |
 |---|---|

@@ -11,6 +11,7 @@
 
 ### Verified
 - Package + installer tested against a fake Steam tree (auto-detect, reinstall, missing Steam, missing SDK Base).
+- First CI run green: Linux (sniper) and Windows (MSVC) builds, packaged zip has both (24 MB).
 - Sourcemods layout follows the SDK's own `gameinfo.txt`; Valve's distribution docs weren't reachable from the
   build box and it hasn't been launched in Steam yet.
 
