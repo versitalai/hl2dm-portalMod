@@ -32,6 +32,10 @@ if [[ ! -f "$HOME/.steam/sdk64/steamclient.so" && -f "$HOME/steamcmd/linux64/ste
 fi
 export LD_LIBRARY_PATH="$SRCDS/bin/linux64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
+# Without a Steam client |appid_243750| can't be resolved ("No SteamApps
+# connection"); a dedicated server finds the HL2/HL2DM content in its own folder.
+sed -i 's/|appid_243750|/|all_source_engine_paths|/g' "$SRCDS/hl2dm_portal/gameinfo.txt"
+
 echo ">> srcds64 -game hl2dm_portal +map $MAP"
 timeout 300 ./srcds64 -game hl2dm_portal -console -norestart -nobreakpad -insecure \
     +sv_lan 1 +maxplayers 4 +sv_portal_selftest 1 +path +map "$MAP" > "$LOG" 2>&1
