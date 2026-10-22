@@ -557,7 +557,7 @@ index e188709..b10bed5 100644
  	Vector		m_angleOwner;
  
 diff --git a/src/game/server/hl2mp/hl2mp_player.cpp b/src/game/server/hl2mp/hl2mp_player.cpp
-index 9457928..1fa0ffc 100644
+index 9457928..071818b 100644
 --- a/src/game/server/hl2mp/hl2mp_player.cpp
 +++ b/src/game/server/hl2mp/hl2mp_player.cpp
 @@ -7,6 +7,7 @@
@@ -568,7 +568,7 @@ index 9457928..1fa0ffc 100644
  #include "globalstate.h"
  #include "game.h"
  #include "gamerules.h"
-@@ -236,9 +237,19 @@ void CHL2MP_Player::GiveAllItems( void )
+@@ -236,9 +237,41 @@ void CHL2MP_Player::GiveAllItems( void )
  	GiveNamedItem( "weapon_slam" );
  
  	GiveNamedItem( "weapon_physcannon" );
@@ -576,6 +576,28 @@ index 9457928..1fa0ffc 100644
  	
  }
  
++//-----------------------------------------------------------------------------
++// Purpose: Partly through a portal, the wall behind the hole stops the physics
++//			shadow (VPhysics knows nothing of portals) and the base class's stuck
++//			checks use plain traces, so both would drag the player back out of
++//			the hole every tick. Game movement already collided correctly
++//			there; keep the shadow with the player instead.
++//-----------------------------------------------------------------------------
++void CHL2MP_Player::VPhysicsShadowUpdate( IPhysicsObject *pPhysics )
++{
++	trace_t tr;
++	if ( GetMoveType() == MOVETYPE_WALK && pPhysics &&
++		UTIL_HL2MPPortal_TracePlayerHull( GetAbsOrigin(), GetAbsOrigin(), CollisionProp()->OBBMins(), CollisionProp()->OBBMaxs(),
++			MASK_PLAYERSOLID, this, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) )
++	{
++		pPhysics->SetPosition( GetAbsOrigin(), vec3_angle, true );
++		m_oldOrigin = GetAbsOrigin();
++		return;
++	}
++
++	BaseClass::VPhysicsShadowUpdate( pPhysics );
++}
++
 +//-----------------------------------------------------------------------------
 +// Purpose: Also network what's visible through portals the player can see.
 +//-----------------------------------------------------------------------------
@@ -588,7 +610,7 @@ index 9457928..1fa0ffc 100644
  void CHL2MP_Player::GiveDefaultItems( void )
  {
  	EquipSuit();
-@@ -262,6 +273,7 @@ void CHL2MP_Player::GiveDefaultItems( void )
+@@ -262,6 +295,7 @@ void CHL2MP_Player::GiveDefaultItems( void )
  	GiveNamedItem( "weapon_smg1" );
  	GiveNamedItem( "weapon_frag" );
  	GiveNamedItem( "weapon_physcannon" );
@@ -597,14 +619,15 @@ index 9457928..1fa0ffc 100644
  	const char *szDefaultWeaponName = engine->GetClientConVarValue( engine->IndexOfEdict( edict() ), "cl_defaultweapon" );
  
 diff --git a/src/game/server/hl2mp/hl2mp_player.h b/src/game/server/hl2mp/hl2mp_player.h
-index 5fad238..b3a1660 100644
+index 5fad238..71aca4b 100644
 --- a/src/game/server/hl2mp/hl2mp_player.h
 +++ b/src/game/server/hl2mp/hl2mp_player.h
-@@ -55,6 +55,7 @@ public:
+@@ -55,6 +55,8 @@ public:
  
  	virtual void Precache( void );
  	virtual void Spawn( void );
 +	virtual void SetupVisibility( CBaseEntity *pViewEntity, unsigned char *pvs, int pvssize );
++	virtual void VPhysicsShadowUpdate( IPhysicsObject *pPhysics );
  	virtual void PostThink( void );
  	virtual void PreThink( void );
  	virtual void PlayerDeathThink( void );
