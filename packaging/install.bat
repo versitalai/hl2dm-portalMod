@@ -14,10 +14,14 @@ if not exist "%HERE%%MOD%\gameinfo.txt" goto :nopkg
 
 rem Where Steam looks for mods. Shared and no-admin installs put Steam in odd
 rem places, so try, in order: the argument, Steam's own settings (per user,
-rem readable without admin), the usual folders, then ask.
+rem readable without admin), the running Steam, the usual folders, Steam
+rem shortcuts, a search of all drives, then ask.
 if not "%~1"=="" call :fromarg "%~1"
 if not defined SOURCEMODS call :fromregistry
+if not defined SOURCEMODS call :fromsearch running
 if not defined SOURCEMODS call :fromcommon
+if not defined SOURCEMODS call :fromsearch shortcuts
+if not defined SOURCEMODS call :fromsearch drives
 if not defined SOURCEMODS call :frompicker
 if not defined SOURCEMODS goto :nosteam
 set "SOURCEMODS=%SOURCEMODS:/=\%"
@@ -124,6 +128,22 @@ for %%D in ("%USERPROFILE%\Steam" "%LOCALAPPDATA%\Steam" "%LOCALAPPDATA%\Program
     if not defined STEAM_DIR if exist "%%~D\steamapps\" set "STEAM_DIR=%%~D"
 )
 if defined STEAM_DIR set "SOURCEMODS=%STEAM_DIR%\steamapps\sourcemods"
+goto :eof
+
+:fromsearch
+rem PowerShell commands (not script files), so execution policy doesn't block
+rem them; if PowerShell itself is blocked this just finds nothing.
+rem   running:   the folder of the steam.exe that's running now
+rem   shortcuts: Steam shortcuts on the desktop and in the Start Menu
+rem   drives:    steam.exe up to 4 folders deep on every drive
+if "%~1"=="drives" echo Searching the drives for Steam (this can take a minute)...
+set "FOUND="
+if "%~1"=="running" for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "Get-Process steam -ErrorAction SilentlyContinue | ForEach-Object { $_.Path } | Where-Object { $_ } | Select-Object -First 1" 2^>nul`) do set "FOUND=%%~dpP"
+if "%~1"=="shortcuts" for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "$sh = New-Object -ComObject WScript.Shell; $dirs = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('CommonDesktopDirectory'), [Environment]::GetFolderPath('StartMenu'), [Environment]::GetFolderPath('CommonStartMenu')); Get-ChildItem -Path $dirs -Filter *.lnk -Recurse -ErrorAction SilentlyContinue | ForEach-Object { $sh.CreateShortcut($_.FullName).TargetPath } | Where-Object { $_ -like '*\steam.exe' } | Select-Object -First 1" 2^>nul`) do set "FOUND=%%~dpP"
+if "%~1"=="drives" for /f "usebackq delims=" %%P in (`powershell -NoProfile -Command "Get-PSDrive -PSProvider FileSystem | ForEach-Object { Get-ChildItem -Path $_.Root -Filter steam.exe -File -Recurse -Depth 4 -ErrorAction SilentlyContinue } | Where-Object { Test-Path (Join-Path $_.DirectoryName 'steamapps') } | ForEach-Object { $_.FullName } | Select-Object -First 1" 2^>nul`) do set "FOUND=%%~dpP"
+if not defined FOUND goto :eof
+set "FOUND=%FOUND:~0,-1%"
+if exist "%FOUND%\steamapps\" call :fromarg "%FOUND%"
 goto :eof
 
 :frompicker

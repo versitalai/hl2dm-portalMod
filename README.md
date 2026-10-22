@@ -11,8 +11,9 @@ Anything that moves goes through them. You see through them live.
 2. Download `hl2dm_portal-<version>.zip` from [Releases](https://github.com/versitalai/hl2dm-portalmod/releases)
    (or the `hl2dm_portal` artifact of the latest [build](https://github.com/versitalai/hl2dm-portalmod/actions) run) and unzip it.
 3. **Windows:** double-click `install.bat`. No admin needed. It finds Steam through Steam's own per-user settings
-   (including where Steam lists mods from, `SourceModInstallPath`) and the usual no-admin folders, and if that fails
-   it asks you to pick the Steam folder. It puts an **HL2DM Portal** shortcut on the desktop.
+   (including where Steam lists mods from, `SourceModInstallPath`), the running Steam, the usual folders, Steam
+   shortcuts and a search of all drives, so Steam can be anywhere. Only if all that fails does it ask you to pick the
+   Steam folder. It puts an **HL2DM Portal** shortcut on the desktop.
    **Linux:** `./install.sh` (native and Flatpak Steam; `--steam-dir DIR` otherwise).
    Or copy the `hl2dm_portal` folder into Steam's `steamapps/sourcemods/` yourself.
 4. Launch it from the desktop shortcut, or restart Steam and launch **HL2DM Portal** from your Library.

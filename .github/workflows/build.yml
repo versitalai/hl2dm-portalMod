@@ -198,6 +198,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'install into a sourcemods folder failed' }
           if (-not (Test-Path "$mods\hl2dm_portal\bin\x64\client.dll")) { throw 'not installed into the sourcemods folder' }
 
+          Write-Host '== no path given, Steam in an odd folder, found through a desktop shortcut'
+          $odd = 'C:\hl2odd\x\y\Steam'
+          New-Item -ItemType Directory -Force "$odd\steamapps" | Out-Null
+          New-Item -ItemType File -Force "$odd\steam.exe" | Out-Null
+          $lnk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Steam (odd).lnk'
+          $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk); $sc.TargetPath = "$odd\steam.exe"; $sc.Save()
+          cmd /c "pkg\install.bat" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'install via shortcut search failed' }
+          if (-not (Test-Path "$odd\steamapps\sourcemods\hl2dm_portal\gameinfo.txt")) { throw 'not installed via shortcut search' }
+          Remove-Item $lnk
+
+          Write-Host '== no path given, no shortcut: found by searching the drives'
+          Remove-Item -Recurse -Force "$odd\steamapps\sourcemods"
+          cmd /c "pkg\install.bat" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'install via drive search failed' }
+          if (-not (Test-Path "$odd\steamapps\sourcemods\hl2dm_portal\gameinfo.txt")) { throw 'not installed via drive search' }
+
           Write-Host '== server kit on a fake HL2DM server'
           $srv = Join-Path $env:RUNNER_TEMP 'srcds'
           New-Item -ItemType Directory -Force "$srv\hl2mp" | Out-Null
