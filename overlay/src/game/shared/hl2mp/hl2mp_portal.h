@@ -28,6 +28,10 @@
 #define HL2MP_PORTAL_HALF_WIDTH		32.0f
 #define HL2MP_PORTAL_HALF_HEIGHT	56.0f
 
+// Render depths that can show a live view through a portal (main view, and
+// one level of portal-inside-portal).
+#define HL2MP_PORTAL_MAX_DEPTH		2
+
 // Max number of portals a bullet / portal shot may pass through.
 #define HL2MP_PORTAL_MAX_RECURSION	4
 
@@ -65,6 +69,15 @@ public:
 	// the front of this portal comes out of the front of the linked one.
 	VMatrix			MatrixThisToLinked() const;
 
+	// Portals whose normal lies along a world axis (almost all walls, floors,
+	// ceilings) let players move into them: the wall behind stops blocking and
+	// the player goes through when their eye crosses the plane. Returns the
+	// axis (0-2), the sign of the normal along it and the plane coordinate.
+	bool			GetPlaneAxis( int *pAxis, float *pSign, float *pDist ) const;
+	bool			CanCarve() const;
+	// Does a hull (world center, half size) fit through the hole for movement?
+	bool			HullFitsHole( const Vector &vecCenter, const Vector &vecHalf ) const;
+
 	// Is a point (near the portal plane) inside the ellipse? flScale grows/shrinks it.
 	bool			IsPointInEllipse( const Vector &vPoint, float flScale = 1.0f ) const;
 
@@ -92,6 +105,9 @@ public:
 
 	// Add the far sides of portals the viewer can see to the PVS.
 	static void		AddPortalsToPVS( unsigned char *pvs, int pvssize );
+
+	// Recent teleports, newest last (for sv_portal_selftest and debugging).
+	static bool		WasTeleported( CBaseEntity *pEntity );
 #endif
 
 #ifdef CLIENT_DLL
@@ -103,9 +119,11 @@ public:
 	virtual int		DrawModel( int flags );
 	virtual bool	ShouldReceiveProjectedTextures( int flags ) { return false; }
 
-	// Render target slot holding this portal's view for frame m_iViewFrame.
-	int				m_iViewSlot;
-	int				m_iViewFrame;
+	// Render target slot holding this portal's view, per render depth
+	// (0 = seen from the main view, 1 = seen inside another portal's view).
+	// Valid while m_iViewStamp[d] == g_iHL2MPPortalViewStamp[d].
+	int				m_iViewSlot[HL2MP_PORTAL_MAX_DEPTH];
+	int				m_iViewStamp[HL2MP_PORTAL_MAX_DEPTH];
 #endif
 
 private:
@@ -118,23 +136,45 @@ private:
 // world surface. Returns the number of portals passed through. *pTrace holds
 // the final segment (startpos is where it left the last portal), *pVecDirOut
 // the final direction. *pPath gets each segment as a start/end pair.
+// pFilterAfterPortal, if given, replaces pFilter once the ray has gone through
+// a portal (bullets can hit their shooter on the way back out).
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut = NULL,
 	const Vector *pHullMins = NULL, const Vector *pHullMaxs = NULL, CHL2MPPortal *pIgnorePortal = NULL,
-	CUtlVector<Vector> *pPath = NULL );
+	CUtlVector<Vector> *pPath = NULL, ITraceFilter *pFilterAfterPortal = NULL );
+
+// Player movement through portals. Shared so client prediction matches the
+// server. Trace a player hull that may be partly inside an open portal's hole:
+// the wall behind the hole doesn't block, the part through the hole collides
+// on the exit side. Returns false if no portal is involved (do a normal trace).
+bool UTIL_HL2MPPortal_TracePlayerHull( const Vector &vecStart, const Vector &vecEnd, const Vector &vecMins, const Vector &vecMaxs,
+	unsigned int mask, IHandleEntity *pIgnore, int collisionGroup, trace_t &pm );
+
+// The portal whose plane the eye crossed while moving from vecEyeStart to
+// vecEye (with the hull inside its hole), or NULL.
+CHL2MPPortal *UTIL_HL2MPPortal_FindPlayerTransition( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecEyeStart, const Vector &vecEye );
 
 #ifdef CLIENT_DLL
 // Set while a portal view is being rendered into a render target.
 extern bool g_bRenderingHL2MPPortalView;
 
-// Main view's world->projection matrix and the viewport/RT size ratio, for
-// mapping portal vertices to render target texture coordinates.
-extern VMatrix g_matHL2MPPortalWorldToProjection;
+// Depth of the view being rendered: 0 = main view, 1 = a portal's view,
+// 2 = a portal's view inside a portal's view (portals there draw flat).
+extern int g_iHL2MPPortalRenderDepth;
+
+// Per depth: world->projection of the view at that depth (for mapping
+// portal vertices to render target coordinates) and the current stamp.
+extern VMatrix g_matHL2MPPortalWorldToProjection[HL2MP_PORTAL_MAX_DEPTH];
+extern int g_iHL2MPPortalViewStamp[HL2MP_PORTAL_MAX_DEPTH];
 extern float g_flHL2MPPortalUScale;
 extern float g_flHL2MPPortalVScale;
 
-// Number of render-to-texture slots allocated in CHL2MPRenderTargets.
-#define HL2MP_PORTAL_MAX_VIEWS 2
+// Render-to-texture slots allocated in CHL2MPRenderTargets: the first
+// HL2MP_PORTAL_MAX_PRIMARY_VIEWS for portals seen from the main view, the
+// rest for portals seen inside those.
+#define HL2MP_PORTAL_MAX_PRIMARY_VIEWS	2
+#define HL2MP_PORTAL_MAX_NESTED_VIEWS	2
+#define HL2MP_PORTAL_MAX_VIEWS			( HL2MP_PORTAL_MAX_PRIMARY_VIEWS + HL2MP_PORTAL_MAX_NESTED_VIEWS )
 const char *HL2MPPortal_GetRenderTargetName( int iSlot );
 #endif
 

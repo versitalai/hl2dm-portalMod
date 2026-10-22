@@ -28,8 +28,9 @@ From source on Linux, one command does it all (fetch SDK, build, package, instal
 | Portal gun shots | Go through existing portals too, so you can place a portal through a portal |
 | SLAM tripmine laser | Beam continues through portals (drawn on every segment). Anyone crossing any segment trips it; opening, closing or moving a portal on its path trips it too |
 
-Gravity-gunned objects are dropped as they go through. Props with motion disabled, and things stuck to walls (a
-placed tripmine), stay put.
+Props you're holding (gravity gun or `+use`) stay held through portals, from either side. Walk into a wall or floor
+portal and you go through in one smooth move (no snap) when your eye crosses it; off-center you snap through. Props with
+motion disabled, and things stuck to walls (a placed tripmine), stay put.
 
 ## See-through rendering
 
@@ -42,8 +43,8 @@ recursion (a portal seen inside a portal view) draws as a solid tinted portal.
 Built for it: HL2DM is multiplayer-only, and everything runs server-authoritative.
 - Every player has their own blue/orange pair. Anyone can use anyone's portals.
 - Portals are always networked to every client (`FL_EDICT_ALWAYS`), so each client can draw any portal and its view.
-- Teleporting happens on the server and replicates like `trigger_teleport`. Clients don't predict it, so with latency
-  your view snaps through after a round trip.
+- Walking through a portal is part of player movement, so it's client-predicted: no snap-back with latency. Everything
+  else teleports on the server and replicates like `trigger_teleport`.
 - Bullets are traced through portals the same way on server and client, so impacts line up.
 - Each player's PVS gets the exit side of portals they can see, so players/props over there are sent and show up in
   the portal view.
@@ -69,6 +70,17 @@ The gun is in weapon slot 1 (with crowbar / gravity gun). Portals are removed wh
 | `sv_portal_lookahead` | 3 | server | Ticks of lookahead for fast movers |
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |
 | `sv_portal_debug` | 0 | server (cheat) | Draw detection volumes, placement traces, exit boxes |
+
+## Dedicated server
+
+The mod runs on the Half-Life 2: Deathmatch Dedicated Server (Steam app 232370, `steamcmd +app_update 232370`) with
+`-game hl2dm_portal`. CI does this on every push (`scripts/selftest.sh`, `+sv_portal_selftest 1`: portals, props,
+rockets, bullets and a bot walking through holding a box, on `dm_lockdown`). What it needs, all done by the script:
+
+- A 64-bit launcher: the depot's `srcds_linux` is 32-bit. `tests/srcds64.c` loads `bin/linux64/dedicated_srv.so`.
+- The SDK's 64-bit `libsteam_api.so` next to it, and `steamclient.so` in `~/.steam/sdk64`.
+- Plain-name links for the engine's `bin/linux64/*_srv.so` modules, and the mod's `server_srv.so` -> `server.so`.
+- In the mod's `gameinfo.txt`, `|appid_243750|` -> `|all_source_engine_paths|` (no Source SDK Base on a server).
 
 ## Build
 

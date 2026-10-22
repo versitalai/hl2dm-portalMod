@@ -64,6 +64,44 @@ jobs:
             sdk/game/mod_hl2mp/bin/x64/server.dll
           if-no-files-found: error
 
+  # Runs the mod on a real dedicated server (Source SDK Base 2013 Dedicated
+  # Server... HL2DM dedicated server 232370, anonymous steamcmd download) and checks portal behavior in-engine.
+  selftest:
+    needs: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bin-linux64
+          path: bin-linux64
+      - name: Install dedicated server
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lib32gcc-s1 lib32stdc++6 gdb > /dev/null
+          mkdir -p ~/steamcmd && cd ~/steamcmd
+          curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar xz
+          # First run updates steamcmd itself and can exit non-zero; retry.
+          for i in 1 2 3; do
+            ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 232370 validate +quit && break
+          done
+          ls "$HOME/srcds"
+      - name: Assemble mod
+        run: |
+          scripts/setup.sh
+          mkdir -p sdk/game/mod_hl2mp/bin/linux64
+          cp bin-linux64/*.so sdk/game/mod_hl2mp/bin/linux64/
+          scripts/package.sh sdk selftest
+          cp -r dist/stage/hl2dm_portal "$HOME/srcds/"
+      - name: Run self-test
+        run: scripts/selftest.sh "$HOME/srcds"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selftest-log
+          path: ~/srcds/portal_selftest.log
+
   package:
     needs: [linux, windows]
     runs-on: ubuntu-latest
@@ -88,13 +126,89 @@ jobs:
           else VERSION="${GITHUB_SHA::7}"; fi
           scripts/package.sh sdk "$VERSION"
           echo "ZIP=$(ls dist/*.zip)" >> "$GITHUB_ENV"
+      - name: Test Linux installer
+        run: |
+          mkdir -p "$RUNNER_TEMP/Steam/steamapps"
+          dist/stage/install.sh --steam-dir "$RUNNER_TEMP/Steam"
+          test -f "$RUNNER_TEMP/Steam/steamapps/sourcemods/hl2dm_portal/bin/linux64/client.so"
+          test -f "$RUNNER_TEMP/Steam/steamapps/sourcemods/hl2dm_portal/gameinfo.txt"
       - uses: actions/upload-artifact@v4
         with:
           name: hl2dm_portal
           path: dist/stage/
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
-        uses: softprops/action-gh-release@v2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-zip
+          path: ${{ env.ZIP }}
+
+  # Runs install.bat for real: fresh install, reinstall over a briefly locked
+  # DLL (the "sharing violation" case), and a DLL that stays locked.
+  test-windows-installer:
+    needs: package
+    runs-on: windows-2022
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: hl2dm_portal
+          path: pkg
+      - name: Test install.bat
+        shell: pwsh
+        env:
+          HL2DM_NO_PAUSE: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $steam = Join-Path $env:RUNNER_TEMP 'Steam'
+          New-Item -ItemType Directory -Force "$steam\steamapps" | Out-Null
+          $dll = "$steam\steamapps\sourcemods\hl2dm_portal\bin\x64\client.dll"
+          $src = (Resolve-Path 'pkg\hl2dm_portal\bin\x64\client.dll').Path
+
+          function Run-Install {
+            cmd /c "pkg\install.bat `"$steam`"" | Out-Host
+            return $LASTEXITCODE
+          }
+          function Lock-For($seconds) {
+            $j = Start-Job -ArgumentList $dll, $seconds {
+              param($p, $s)
+              $f = [System.IO.File]::Open($p, 'Open', 'ReadWrite', 'None')
+              Start-Sleep $s
+              $f.Close()
+            }
+            Start-Sleep 3
+            return $j
+          }
+
+          Write-Host '== fresh install'
+          if ((Run-Install) -ne 0) { throw 'fresh install failed' }
+          if (-not (Test-Path $dll)) { throw 'client.dll not installed' }
+
+          Write-Host '== reinstall while client.dll is locked for 8 s (retries should win)'
+          (Get-Item $src).LastWriteTime = Get-Date
+          $j = Lock-For 8
+          if ((Run-Install) -ne 0) { throw 'reinstall over a briefly locked file failed' }
+          Wait-Job $j | Out-Null
+          if ((Get-Item $dll).LastWriteTime -lt (Get-Item $src).LastWriteTime.AddSeconds(-2)) { throw 'client.dll not updated' }
+
+          Write-Host '== client.dll stays locked (must fail cleanly, not hang)'
+          (Get-Item $src).LastWriteTime = (Get-Date).AddMinutes(1)
+          $j = Lock-For 60
+          if ((Run-Install) -eq 0) { throw 'install should have failed while the file was locked' }
+          Stop-Job $j; Remove-Job $j -Force
+          Write-Host 'install.bat OK'
+          # The last native exit code (the expected failure above) would fail the step.
+          exit 0
+
+  release:
+    needs: [package, test-windows-installer, selftest]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-zip
+          path: dist
+      - name: Find zip
+        run: echo "ZIP=$(ls dist/*.zip)" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
         with:
           # Creates the tag on this commit when it doesn't exist yet.
           tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
