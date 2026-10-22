@@ -40,6 +40,7 @@ public:
 	{
 		m_iStep = sv_portal_selftest.GetBool() ? 0 : -1;
 		m_flNextStep = gpGlobals->curtime + 2.0f;
+		m_flRealDeadline = Plat_FloatTime() + 180.0f;
 		m_nPass = m_nFail = 0;
 	}
 
@@ -48,8 +49,25 @@ public:
 		if ( m_iStep < 0 )
 			return;
 
-		if ( m_hBot )
-			DriveBot();
+		// The server only simulates (advances curtime, runs physics) with a
+		// client connected, so connect the test bot first. It stays parked,
+		// non-solid and in noclip, until the walk test needs it.
+		if ( !m_hBot && !CreateBot() )
+		{
+			Result( "create_bot", false, "couldn't create a bot" );
+			Finish();
+			return;
+		}
+
+		DriveBot();
+
+		// Wall clock, not curtime: curtime stops if the server stops simulating.
+		if ( Plat_FloatTime() > m_flRealDeadline )
+		{
+			Result( "timeout", false, "step %d, curtime %.1f", m_iStep, gpGlobals->curtime );
+			Finish();
+			return;
+		}
 
 		if ( gpGlobals->curtime < m_flNextStep )
 			return;
@@ -134,6 +152,24 @@ private:
 		return flBest < FLT_MAX;
 	}
 
+	bool CreateBot()
+	{
+		edict_t *pEdict = engine->CreateFakeClient( "PortalTestBot" );
+		CBasePlayer *pBot = pEdict ? ToBasePlayer( CBaseEntity::Instance( pEdict ) ) : NULL;
+		if ( !pBot )
+			return false;
+
+		pBot->ClearFlags();
+		pBot->AddFlag( FL_CLIENT | FL_FAKECLIENT );
+		pBot->Spawn();
+		pBot->SetMoveType( MOVETYPE_NOCLIP );
+		pBot->AddSolidFlags( FSOLID_NOT_SOLID );
+		pBot->AddEffects( EF_NODRAW );
+		m_hBot = pBot;
+		Msg( "PORTALTEST info bot connected\n" );
+		return true;
+	}
+
 	// Walk the bot forward along m_angBot every frame and track how close it
 	// gets to the exit portal.
 	void DriveBot()
@@ -149,6 +185,9 @@ private:
 		cmd.forwardmove = m_bBotWalk ? 200.0f : 0.0f;
 		cmd.buttons = m_bBotWalk ? IN_FORWARD : 0;
 		pBot->ProcessUsercmds( &cmd, 1, 1, 0, false );
+
+		if ( !m_bBotWalk || !m_hFloor )
+			return;
 
 		float flDist = ( pBot->WorldSpaceCenter() - m_hFloor->GetAbsOrigin() ).Length();
 		m_flBotClosest = MIN( m_flBotClosest, flDist );
@@ -258,17 +297,16 @@ private:
 
 			// A player walking into the wall portal goes through in its own
 			// movement (no snap teleport) and comes out of the floor portal.
-			edict_t *pEdict = engine->CreateFakeClient( "PortalTestBot" );
-			CBasePlayer *pBot = pEdict ? ToBasePlayer( CBaseEntity::Instance( pEdict ) ) : NULL;
+			CBasePlayer *pBot = ToBasePlayer( m_hBot );
 			if ( !pBot )
 			{
-				Result( "player_walks_through", false, "couldn't create a bot" );
+				Result( "player_walks_through", false, "bot is gone" );
 				Finish();
 				return;
 			}
-			pBot->ClearFlags();
-			pBot->AddFlag( FL_CLIENT | FL_FAKECLIENT );
-			pBot->Spawn();
+			pBot->SetMoveType( MOVETYPE_WALK );
+			pBot->RemoveSolidFlags( FSOLID_NOT_SOLID );
+			pBot->RemoveEffects( EF_NODRAW );
 
 			Vector vecStart = m_hWall->GetAbsOrigin() + m_vecWallNormal * 64;
 			trace_t tr;
@@ -294,7 +332,6 @@ private:
 				Msg( "PORTALTEST info bot holding box=%d\n", static_cast<CHL2_Player *>( pBot )->IsHoldingEntity( pBox ) );
 			}
 
-			m_hBot = pBot;
 			m_bBotWalk = true;
 			m_flBotClosest = FLT_MAX;
 			Wait( 3.0f );
@@ -321,6 +358,7 @@ private:
 
 	int		m_iStep;
 	float	m_flNextStep;
+	double	m_flRealDeadline;
 	int		m_nPass, m_nFail;
 
 	Vector	m_vecFloor, m_vecWall, m_vecWallNormal, m_vecPropStart;
