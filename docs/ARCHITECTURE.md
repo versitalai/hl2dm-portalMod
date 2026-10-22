@@ -55,6 +55,45 @@ checks these conventions against the SDK's mathlib (`tests/run_math_test.sh`).
    Players keep an axis-aligned hull; only their view rotates (roll dropped, pitch clamped). VPhysics objects get
    their velocity re-applied (angular velocity is local-space, so it carries over unchanged) and are woken.
 
+## Walking through (shared, predicted)
+
+Axis-aligned portals (`CanCarve`: both normals along a world axis) let players move into them as part of normal player
+movement, so the client predicts it. `CHL2GameMovement` (HL2MP) routes `TracePlayerBBox`, `TryTouchGround` and
+`TestPlayerPosition` through `UTIL_HL2MPPortal_TracePlayerHull`:
+- If the hull's footprint is inside the hole (the portal's bounding rectangle + 1 unit) and it touches the plane, the
+  hull is split at the plane. The front part traces normally; the part through the hole is mapped through `M` and
+  traced on the exit side. The wall behind the hole never blocks.
+- Not yet through the plane but outside the hole: normal collision (the wall). Through the plane and moving sideways
+  into the rim: blocked, with a normal opposing the sideways motion (never a zero normal: that froze players).
+- `PlayerMove` moves the player through when the eye crosses the plane: origin/velocity/view through `M`, floor exits
+  get at least 250 u/s out. The client turns the view with `engine->SetViewAngles` on the first prediction.
+- Server: `CHL2MP_Player::VPhysicsShadowUpdate` keeps the player's physics shadow with the player while in a hole.
+  VPhysics doesn't know about portals (the wall stops the shadow), and the base class's stuck checks use plain traces;
+  together they put the player back on the shadow every tick.
+- Off-center players and non-axis-aligned portals use the server teleport above (snap, unpredicted).
+
+## Held objects through portals (server, shared grab controller)
+
+`CGrabController` (gravity gun and `+use` pickup) keeps a stack of portals between holder and object. The hold target
+is computed in the holder's space as usual and mapped through the stack (`TransformThroughPortals`). The wall-clearance
+trace for the hold distance uses the portal trace, so it reaches through a portal instead of stopping at the wall.
+`TeleportEntity` calls `PhysCannon_HeldObjectWentThroughPortal` (push / pop at the object end) and
+`PhysCannon_HolderWentThroughPortal` (pop / push at the holder end; also called from the seamless walk). Punts and
+throws are aimed through the stack. The gravity gun networks `m_nHeldPortalCount`; the client stops predicting the
+held object while it's non-zero. Only a chain deeper than 4 portals drops the object.
+
+## Self-test (dedicated server)
+
+`hl2mp_portal_selftest.cpp` (`sv_portal_selftest 1`) runs on map load, prints `PORTALTEST <name> PASS|FAIL`, then
+`PORTALTEST DONE pass= fail=`, and quits. `scripts/selftest.sh` runs it on the real HL2DM dedicated server in CI.
+- An empty server hibernates and doesn't advance `curtime`: HL2MP has no `sv_hibernate_when_empty`, so
+  `GetServerGCLobby` returns a stub whose `ShouldHibernate()` is false during the test, and the test bot connects on
+  the first frame (parked, noclip, non-solid) so the server simulates. A 180 s real-time watchdog reports stalls.
+- Floor + wall portals near the first spawn: small props stay server-side, a sleeping prop falls through a portal
+  opened under it, held-flag props don't crash, a trace and a rocket go through, and the bot walks into the wall
+  portal carrying a box (`+use`), steered to its center: it must come out of the floor portal without a snap, still
+  holding the box.
+
 ## Bullets (shared)
 
 `UTIL_HL2MPPortal_TraceRay` traces, and when the trace hits a world surface where an open portal lies, re-starts the

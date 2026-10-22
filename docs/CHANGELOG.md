@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-10-22
 
 ### Fixed
 - Crash when a held prop reached a portal (HL2's drop helper uses `UTIL_GetLocalPlayer()`, NULL in multiplayer).
@@ -8,6 +8,11 @@
   server never had them. `sv_pushaway_clientside_size` defaults to 0 in HL2MP, so every prop is a real server prop.
 - Portals seen through a portal drew flat grey; they now show their own live view (one level, `cl_portal_recursion`).
 - Bullets out of a portal can hit their shooter.
+- Found by the dedicated-server self-test:
+  - Walking into a portal stopped 1 unit short: the server put the player back on their physics shadow every tick
+    (the wall stops the shadow; the stuck checks use plain traces). The shadow now follows the player in a hole.
+  - Walking straight into the wall right beside a portal could freeze a player (zero collision normal).
+  - A prop held toward a portal was pulled back short of it by the wall behind the hole (hold-distance trace).
 
 ### Added
 - Held props stay held through portals (gravity gun and `+use`): the hold target follows the portals between holder
@@ -16,8 +21,13 @@
   side, and they go through when the eye crosses the plane (predicted). Off-center players still snap through.
 - Wall portals just above the floor drop onto it so players can walk in.
 - Tunnel mesh behind live portals: the far side stays visible with the camera right at the portal.
-- Real-server self-test (`sv_portal_selftest`, `scripts/selftest.sh`, CI): props, held props, traces, rockets, small
-  props, and a bot walking through while carrying a box.
+- Real-server self-test (`sv_portal_selftest`, `scripts/selftest.sh`, CI) on the HL2DM dedicated server: props,
+  held props, traces, rockets, small props, and a bot walking through while carrying a box. Releases need it to pass.
+- README: running on a dedicated server (64-bit launcher, libraries, gameinfo).
+
+### Verified
+- Self-test on the HL2DM dedicated server (dm_lockdown): 11/11 pass, including a seamless (unsnapped) walk-through
+  with a held box. Client rendering and feel still need a play-test.
 
 ## 0.3.2 — 2026-10-21
 

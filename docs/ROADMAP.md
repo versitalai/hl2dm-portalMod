@@ -13,7 +13,7 @@
 - **Own weapon** isn't drawn on your model in portal views (first-person weapon uses the view model).
 - **Placement is server-only**, so a laggy client sees its portal appear after a round trip.
 - **Content reuse.** Gun uses the gravity gun models/sounds and HUD icon. Portals are drawn procedurally.
-- Client prediction doesn't know about teleports; the server corrects the player (same as `trigger_teleport`).
+- Off-center players (hull outside the hole) and players at non-axis-aligned portals snap through on the server, unpredicted.
 
 ## Ideas / next steps
 1. Play-test pass: tune `sv_portal_lookahead`, exit gap, placement step; check prediction feel through portals.
