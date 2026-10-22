@@ -34,6 +34,8 @@ public:
 		m_nBotCommand = 0;
 		m_flBotClosest = FLT_MAX;
 		m_flNextBotLog = 0.0f;
+		m_flTransitTime = -1.0f;
+		m_bSnapFirst = m_bHeldAfterTransit = false;
 	}
 
 	virtual void LevelInitPostEntity()
@@ -170,6 +172,31 @@ private:
 		return true;
 	}
 
+	// Keep the parked bot away from the test area: the farthest spawn point.
+	void ParkBot()
+	{
+		CBasePlayer *pBot = ToBasePlayer( m_hBot );
+		if ( !pBot )
+			return;
+
+		CBaseEntity *pBest = NULL;
+		float flBest = -1.0f;
+		for ( CBaseEntity *pSpot = gEntList.FindEntityByClassname( NULL, "info_player_deathmatch" ); pSpot; pSpot = gEntList.FindEntityByClassname( pSpot, "info_player_deathmatch" ) )
+		{
+			float flDist = ( pSpot->GetAbsOrigin() - m_vecFloor ).Length();
+			if ( flDist > flBest )
+			{
+				flBest = flDist;
+				pBest = pSpot;
+			}
+		}
+		if ( pBest )
+		{
+			Vector vecSpot = pBest->GetAbsOrigin();
+			pBot->Teleport( &vecSpot, NULL, &vec3_origin );
+		}
+	}
+
 	// Walk the bot forward along m_angBot every frame and track how close it
 	// gets to the exit portal.
 	void DriveBot()
@@ -192,11 +219,27 @@ private:
 		float flDist = ( pBot->WorldSpaceCenter() - m_hFloor->GetAbsOrigin() ).Length();
 		m_flBotClosest = MIN( m_flBotClosest, flDist );
 
+		// Score the first time through only: walking on, the bot comes back
+		// around off-center and snaps through, which is expected.
+		CHL2_Player *pHL2Bot = static_cast<CHL2_Player *>( pBot );
+		if ( m_flTransitTime < 0.0f && flDist < 80.0f )
+		{
+			m_flTransitTime = gpGlobals->curtime;
+			m_bSnapFirst = CHL2MPPortal::WasTeleported( pBot );
+			Msg( "PORTALTEST info bot came out of the exit, snapped=%d\n", m_bSnapFirst );
+		}
+		else if ( m_flTransitTime >= 0.0f && gpGlobals->curtime > m_flTransitTime + 0.5f )
+		{
+			m_bHeldAfterTransit = m_hHeldBox && pHL2Bot->IsHoldingEntity( m_hHeldBox );
+			m_bBotWalk = false;
+		}
+
 		if ( gpGlobals->curtime > m_flNextBotLog )
 		{
 			m_flNextBotLog = gpGlobals->curtime + 0.25f;
 			Vector v = pBot->GetAbsOrigin();
-			Msg( "PORTALTEST info bot at (%.0f %.0f %.0f) vel %.0f dist_to_exit %.0f\n", v.x, v.y, v.z, pBot->GetAbsVelocity().Length(), flDist );
+			Msg( "PORTALTEST info bot at (%.0f %.0f %.0f) vel %.0f dist_to_exit %.0f holding=%d\n", v.x, v.y, v.z, pBot->GetAbsVelocity().Length(), flDist,
+				m_hHeldBox ? pHL2Bot->IsHoldingEntity( m_hHeldBox ) : -1 );
 		}
 	}
 
@@ -212,6 +255,8 @@ private:
 				return;
 			}
 			Result( "geometry", true, "floor (%.0f %.0f %.0f) wall (%.0f %.0f %.0f)", m_vecFloor.x, m_vecFloor.y, m_vecFloor.z, m_vecWall.x, m_vecWall.y, m_vecWall.z );
+
+			ParkBot();
 
 			m_hWall = CreatePortal( HL2MP_PORTAL_BLUE );
 			m_hFloor = CreatePortal( HL2MP_PORTAL_ORANGE );
@@ -242,9 +287,24 @@ private:
 
 			IPhysicsObject *pPhys = m_hProp ? m_hProp->VPhysicsGetObject() : NULL;
 			m_vecPropStart = m_hProp ? m_hProp->GetAbsOrigin() : vec3_origin;
-			Msg( "PORTALTEST info prop asleep=%d\n", pPhys ? pPhys->IsAsleep() : -1 );
+			Msg( "PORTALTEST info prop asleep=%d at (%.0f %.0f %.0f)\n", pPhys ? pPhys->IsAsleep() : -1, m_vecPropStart.x, m_vecPropStart.y, m_vecPropStart.z );
 
-			Result( "place_floor", m_hFloor->PlaceOnSurface( m_vecFloor, Vector( 0, 0, 1 ), Vector( 1, 0, 0 ) ) );
+			// Open the floor portal right under where the prop came to rest.
+			Vector vecUnder = m_vecFloor;
+			if ( m_hProp )
+			{
+				trace_t tr;
+				Vector vecCenter = m_hProp->WorldSpaceCenter();
+				UTIL_TraceLine( vecCenter, vecCenter - Vector( 0, 0, 256 ), MASK_SOLID_BRUSHONLY, NULL, COLLISION_GROUP_NONE, &tr );
+				if ( tr.fraction < 1.0f && tr.plane.normal.z > 0.9f )
+				{
+					vecUnder = tr.endpos;
+				}
+			}
+			Result( "place_floor", m_hFloor->PlaceOnSurface( vecUnder, Vector( 0, 0, 1 ), Vector( 1, 0, 0 ) ) );
+			Vector vecFloorPortal = m_hFloor->GetAbsOrigin();
+			Msg( "PORTALTEST info floor portal at (%.0f %.0f %.0f) should_teleport_prop=%d\n", vecFloorPortal.x, vecFloorPortal.y, vecFloorPortal.z,
+				m_hProp ? m_hFloor->ShouldTeleport( m_hProp ) : -1 );
 			Wait( 1.5f );
 			return;
 		}
@@ -255,9 +315,19 @@ private:
 			bool bMoved = m_hProp && ( m_hProp->GetAbsOrigin() - m_vecPropStart ).Length() > 64;
 			Result( "sleeping_prop_falls_through", m_hProp && CHL2MPPortal::WasTeleported( m_hProp ) && bMoved,
 				"teleported=%d moved=%d", m_hProp ? CHL2MPPortal::WasTeleported( m_hProp ) : 0, bMoved );
+			if ( m_hProp )
+			{
+				Vector v = m_hProp->GetAbsOrigin();
+				Msg( "PORTALTEST info prop now at (%.0f %.0f %.0f)\n", v.x, v.y, v.z );
+				UTIL_Remove( m_hProp );
+			}
+			if ( m_hCan )
+			{
+				UTIL_Remove( m_hCan );
+			}
 
 			// Bug report: a held prop reaching a portal crashed the game.
-			m_hHeldProp = CreateProp( m_vecFloor + Vector( 0, 0, 80 ) );
+			m_hHeldProp = CreateProp( m_hFloor->GetAbsOrigin() + Vector( 0, 0, 80 ) );
 			IPhysicsObject *pPhys = m_hHeldProp->VPhysicsGetObject();
 			if ( pPhys )
 			{
@@ -270,6 +340,10 @@ private:
 		case 3:
 		{
 			Result( "held_prop_no_crash", m_hHeldProp && CHL2MPPortal::WasTeleported( m_hHeldProp ) );
+			if ( m_hHeldProp )
+			{
+				UTIL_Remove( m_hHeldProp );
+			}
 
 			// Bullet-style trace into the wall portal comes out of the floor one.
 			trace_t tr;
@@ -282,7 +356,12 @@ private:
 			// A rocket fired at the wall portal must come out, not explode on the wall.
 			QAngle angRocket;
 			VectorAngles( -m_vecWallNormal, angRocket );
-			m_hRocket = CMissile::Create( m_hWall->GetAbsOrigin() + m_vecWallNormal * 400, angRocket, NULL );
+			// Start it inside the room (up to 300 units out, short of whatever is behind).
+			trace_t trRoom;
+			UTIL_TraceLine( m_hWall->GetAbsOrigin() + m_vecWallNormal * 8, m_hWall->GetAbsOrigin() + m_vecWallNormal * 300, MASK_SOLID, NULL, COLLISION_GROUP_NONE, &trRoom );
+			float flRocketDist = MAX( 8.0f + ( 292.0f * trRoom.fraction ) - 32.0f, 48.0f );
+			Msg( "PORTALTEST info rocket starts %.0f out\n", flRocketDist );
+			m_hRocket = CMissile::Create( m_hWall->GetAbsOrigin() + m_vecWallNormal * flRocketDist, angRocket, NULL );
 			if ( m_hRocket )
 			{
 				m_hRocket->SetAbsVelocity( -m_vecWallNormal * 1500 );
@@ -293,7 +372,7 @@ private:
 
 		case 4:
 		{
-			Result( "rocket_through_portal", m_hRocket && CHL2MPPortal::WasTeleported( m_hRocket ) );
+			Result( "rocket_through_portal", m_hRocket && CHL2MPPortal::WasTeleported( m_hRocket ), "alive=%d", m_hRocket.Get() != NULL );
 
 			// A player walking into the wall portal goes through in its own
 			// movement (no snap teleport) and comes out of the floor portal.
@@ -340,13 +419,11 @@ private:
 
 		case 5:
 		{
-			bool bSnapped = CHL2MPPortal::WasTeleported( m_hBot );
-			Result( "player_walks_through", m_flBotClosest < 80.0f, "closest_to_exit=%.0f", m_flBotClosest );
-			Result( "player_through_seamless", m_flBotClosest < 80.0f && !bSnapped, "snap_teleported=%d", bSnapped );
-			CHL2_Player *pBot = static_cast<CHL2_Player *>( ToBasePlayer( m_hBot ) );
-			bool bHeld = pBot && m_hHeldBox && pBot->IsHoldingEntity( m_hHeldBox );
-			Result( "held_prop_stays_held_through_portal", bHeld && CHL2MPPortal::WasTeleported( m_hHeldBox ),
-				"held=%d box_teleported=%d", bHeld, m_hHeldBox ? CHL2MPPortal::WasTeleported( m_hHeldBox ) : 0 );
+			bool bThrough = m_flTransitTime >= 0.0f;
+			Result( "player_walks_through", bThrough, "closest_to_exit=%.0f", m_flBotClosest );
+			Result( "player_through_seamless", bThrough && !m_bSnapFirst, "snap_teleported=%d", m_bSnapFirst );
+			Result( "held_prop_stays_held_through_portal", bThrough && m_bHeldAfterTransit && m_hHeldBox && CHL2MPPortal::WasTeleported( m_hHeldBox ),
+				"held=%d box_teleported=%d", m_bHeldAfterTransit, m_hHeldBox ? CHL2MPPortal::WasTeleported( m_hHeldBox ) : 0 );
 
 			m_bBotWalk = false;
 			m_hBot = NULL;
@@ -369,6 +446,9 @@ private:
 	int		m_nBotCommand;
 	float	m_flBotClosest;
 	float	m_flNextBotLog;
+	float	m_flTransitTime;
+	bool	m_bSnapFirst;
+	bool	m_bHeldAfterTransit;
 	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan, m_hHeldBox;
 };
 

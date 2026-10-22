@@ -860,7 +860,7 @@ index fe50736..b667e34 100644
  
  	// See if we are pressing use near a ladder "mount" point and if so, latch us onto the ladder
 diff --git a/src/game/shared/hl2mp/weapon_physcannon.cpp b/src/game/shared/hl2mp/weapon_physcannon.cpp
-index 26fdfef..c7d0b0a 100644
+index 26fdfef..510e73f 100644
 --- a/src/game/shared/hl2mp/weapon_physcannon.cpp
 +++ b/src/game/shared/hl2mp/weapon_physcannon.cpp
 @@ -278,6 +278,7 @@ CGrabController::CGrabController( void )
@@ -1012,7 +1012,29 @@ index 26fdfef..c7d0b0a 100644
  		{
  			float heldDist = ( pHeld->WorldSpaceCenter() - pOwner->WorldSpaceCenter() ).Length();
  
-@@ -1977,7 +2069,12 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+@@ -1901,9 +1993,18 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+ 
+ 	trace_t	tr;
+ 	CTraceFilterSkipTwoEntities traceFilter( pPlayer, pEntity, COLLISION_GROUP_NONE );
+-	Ray_t ray;
+-	ray.Init( start, end );
+-	enginetrace->TraceRay( ray, MASK_SOLID_BRUSHONLY, &traceFilter, &tr );
++
++	// Portal mod: the wall inside an open portal doesn't pull the object back;
++	// measure the clearance along the path through it. The target stays on
++	// the holder's side and is carried through in TransformThroughPortals.
++	CUtlVector<Vector> path;
++	UTIL_HL2MPPortal_TraceRay( start, forward, distance, MASK_SOLID_BRUSHONLY, &traceFilter, &tr, NULL, NULL, NULL, NULL, &path );
++	float flTraveled = 0.0f;
++	for ( int i = 0; i + 1 < path.Count(); i += 2 )
++	{
++		flTraveled += ( path[i + 1] - path[i] ).Length();
++	}
++	tr.fraction = flTraveled / distance;
+ 
+ 	if ( tr.fraction < 0.5 )
+ 	{
+@@ -1977,7 +2078,12 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
  	AngleMatrix( angles, attachedToWorld );
  	VectorRotate( m_attachedPositionObjectSpace, attachedToWorld, offset );
  
@@ -1026,7 +1048,7 @@ index 26fdfef..c7d0b0a 100644
  
  	return true;
  }
-@@ -1999,6 +2096,8 @@ void CWeaponPhysCannon::UpdateObject( void )
+@@ -1999,6 +2105,8 @@ void CWeaponPhysCannon::UpdateObject( void )
  //-----------------------------------------------------------------------------
  void CWeaponPhysCannon::DetachObject( bool playSound, bool wasLaunched )
  {
@@ -1035,7 +1057,7 @@ index 26fdfef..c7d0b0a 100644
  #ifndef CLIENT_DLL
  	// misyl: Disable pred filtering in this server-only section.
  	CDisablePredictionFiltering disablePred;
-@@ -2061,7 +2160,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
+@@ -2061,7 +2169,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
  {
  	CBaseEntity *pAttachedObject = m_hAttachedObject.Get();
  
@@ -1046,7 +1068,7 @@ index 26fdfef..c7d0b0a 100644
  	{
  		// NOTE :This must happen after OnPhysGunPickup because that can change the mass
  		if ( pAttachedObject != GetGrabController().GetAttached() )
-@@ -3342,3 +3443,74 @@ void CallbackPhyscannonImpact( const CEffectData &data )
+@@ -3342,3 +3452,74 @@ void CallbackPhyscannonImpact( const CEffectData &data )
  DECLARE_CLIENT_EFFECT( "PhyscannonImpact", CallbackPhyscannonImpact );
  
  #endif
