@@ -10,10 +10,19 @@ Anything that moves goes through them. You see through them live.
 1. Install **Source SDK Base 2013 Multiplayer** from Steam (free): `steam://install/243750`
 2. Download `hl2dm_portal-<version>.zip` from [Releases](https://github.com/versitalai/hl2dm-portalmod/releases)
    (or the `hl2dm_portal` artifact of the latest [build](https://github.com/versitalai/hl2dm-portalmod/actions) run) and unzip it.
-3. **Windows:** double-click `install.bat`. **Linux:** `./install.sh`
-   (finds native and Flatpak Steam; `--steam-dir DIR` otherwise). Or copy the `hl2dm_portal` folder into
-   `Steam/steamapps/sourcemods/` yourself.
-4. Restart Steam, launch **HL2DM Portal** from your Library.
+3. **Windows:** double-click `install.bat`. No admin needed. It finds Steam through Steam's own per-user settings
+   (including where Steam lists mods from, `SourceModInstallPath`) and the usual no-admin folders, and if that fails
+   it asks you to pick the Steam folder. It puts an **HL2DM Portal** shortcut on the desktop.
+   **Linux:** `./install.sh` (native and Flatpak Steam; `--steam-dir DIR` otherwise).
+   Or copy the `hl2dm_portal` folder into Steam's `steamapps/sourcemods/` yourself.
+4. Launch it from the desktop shortcut, or restart Steam and launch **HL2DM Portal** from your Library.
+
+Normal HL2DM is untouched: play regular servers with HL2DM, portal servers with HL2DM Portal.
+Servers can't install the mod for players (a server can send maps and models, never code).
+
+**Sharing it with your server's players:** put your server's address (e.g. `203.0.113.5:27016`) as the only line of
+a `server.txt` next to `install.bat` before you share the folder. The installer then also makes a
+**Join HL2DM Portal server** desktop shortcut.
 
 From source on Linux, one command does it all (fetch SDK, build, package, install): `scripts/install.sh`
 
@@ -73,11 +82,21 @@ The gun is in weapon slot 1 (with crowbar / gravity gun). Portals are removed wh
 
 ## Dedicated server
 
-The mod runs on the Half-Life 2: Deathmatch Dedicated Server (Steam app 232370, `steamcmd +app_update 232370`) with
-`-game hl2dm_portal`. CI does this on every push (`scripts/selftest.sh`, `+sv_portal_selftest 1`: portals, props,
-rockets, bullets and a bot walking through holding a box, on `dm_lockdown`). What it needs, all done by the script:
+Add the mod to an existing Half-Life 2: Deathmatch Dedicated Server (Steam app 232370) with the `server/` folder of
+the release. Your normal HL2DM server keeps running; the portal server runs next to it on port 27016.
 
-- A 64-bit launcher: the depot's `srcds_linux` is 32-bit. `tests/srcds64.c` loads `bin/linux64/dedicated_srv.so`.
+- **Linux:** `server/install_server.sh /path/to/server [--port 27016] [--map dm_lockdown]`, then
+  `start_portal_server.sh` in the server folder.
+- **Windows:** `server\install_server.bat "C:\path\to\server" [port]`, then `start_portal_server.bat`
+  (needs `srcds_win64.exe`; only tested against a fake server so far).
+- Not sure which? The server folder has `srcds_run`/`srcds_linux` on Linux, `srcds.exe`/`srcds_win64.exe` on Windows.
+  See `server/README_SERVER.txt`, also for hosted servers.
+
+CI runs the Linux kit on every push and then the self-test on it (`scripts/selftest.sh`, `+sv_portal_selftest 1`:
+portals, props, rockets, bullets and a bot walking through holding a box, on `dm_lockdown`). What the Linux kit does:
+
+- A 64-bit launcher, `srcds_portal64`: the depot's `srcds_linux` is 32-bit. It loads `bin/linux64/dedicated_srv.so`
+  (`packaging/server/srcds_portal64.c`).
 - The SDK's 64-bit `libsteam_api.so` next to it, and `steamclient.so` in `~/.steam/sdk64`.
 - Plain-name links for the engine's `bin/linux64/*_srv.so` modules, and the mod's `server_srv.so` -> `server.so`.
 - In the mod's `gameinfo.txt`, `|appid_243750|` -> `|all_source_engine_paths|` (no Source SDK Base on a server).

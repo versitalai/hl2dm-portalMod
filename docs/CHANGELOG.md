@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.1 — unreleased
+
+### Added
+- Server kit in the release (`server/`): `install_server.sh` (Linux) and `install_server.bat` (Windows) add the mod to
+  an existing HL2DM dedicated server and write `start_portal_server.*` for a second server on port 27016. Updates keep
+  `server.cfg` and the port/map. CI sets up its self-test server with it, so the Linux kit is tested every push.
+- `install.bat` for shared / no-admin PCs: reads `SourceModInstallPath` (where Steam actually lists mods from), checks
+  more no-admin Steam folders, asks with a folder picker as a last resort, checks write access, finds Source SDK Base
+  in any Steam library, and makes desktop launchers (`steam.exe -applaunch 243750 -game <mod>`), so no Steam restart.
+  A `server.txt` (address:port) next to it adds a "Join HL2DM Portal server" shortcut.
+- `install.sh`: `SourceModInstallPath` from `registry.vdf`, Source SDK Base in any library.
+
+### Fixed
+- `install.bat` messages broke on Steam paths with parentheses, e.g. `C:\Program Files (x86)\Steam`.
+
 ## 0.4.0 — 2026-10-22
 
 ### Fixed

@@ -28,13 +28,17 @@ jobs:
       - name: Fetch SDK and apply mod
         run: scripts/setup.sh
       - name: Build
-        run: scripts/build_linux.sh
+        run: |
+          scripts/build_linux.sh
+          # 64-bit dedicated server launcher for the server kit.
+          cc -O2 -o sdk/game/mod_hl2mp/bin/linux64/srcds_portal64 packaging/server/srcds_portal64.c -ldl
       - uses: actions/upload-artifact@v4
         with:
           name: bin-linux64
           path: |
             sdk/game/mod_hl2mp/bin/linux64/client.so
             sdk/game/mod_hl2mp/bin/linux64/server.so
+            sdk/game/mod_hl2mp/bin/linux64/srcds_portal64
           if-no-files-found: error
 
   windows:
@@ -64,8 +68,8 @@ jobs:
             sdk/game/mod_hl2mp/bin/x64/server.dll
           if-no-files-found: error
 
-  # Runs the mod on a real dedicated server (Source SDK Base 2013 Dedicated
-  # Server... HL2DM dedicated server 232370, anonymous steamcmd download) and checks portal behavior in-engine.
+  # Sets up a real HL2DM dedicated server (app 232370, anonymous steamcmd) with
+  # the release's server kit, then checks portal behavior in-engine.
   selftest:
     needs: linux
     runs-on: ubuntu-latest
@@ -87,13 +91,12 @@ jobs:
             ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 232370 validate +quit && break
           done
           ls "$HOME/srcds"
-      - name: Assemble mod
+      - name: Package
         run: |
           scripts/setup.sh
           mkdir -p sdk/game/mod_hl2mp/bin/linux64
-          cp bin-linux64/*.so sdk/game/mod_hl2mp/bin/linux64/
+          cp bin-linux64/* sdk/game/mod_hl2mp/bin/linux64/
           scripts/package.sh sdk selftest
-          cp -r dist/stage/hl2dm_portal "$HOME/srcds/"
       - name: Run self-test
         run: scripts/selftest.sh "$HOME/srcds"
       - uses: actions/upload-artifact@v4
@@ -177,9 +180,32 @@ jobs:
             return $j
           }
 
-          Write-Host '== fresh install'
+          Write-Host '== fresh install (with steam.exe and server.txt: desktop launchers)'
+          New-Item -ItemType File -Force "$steam\steam.exe" | Out-Null
+          Set-Content -Path 'pkg\server.txt' -Value '203.0.113.5:27016'
           if ((Run-Install) -ne 0) { throw 'fresh install failed' }
           if (-not (Test-Path $dll)) { throw 'client.dll not installed' }
+          $desktop = [Environment]::GetFolderPath('Desktop')
+          $join = Get-Content "$desktop\Join HL2DM Portal server.bat" -Raw
+          if ($join -notmatch '\+connect 203\.0\.113\.5:27016') { throw "join launcher wrong: $join" }
+          if ($join -notmatch '-applaunch 243750 -game') { throw "join launcher wrong: $join" }
+          if (-not (Test-Path "$desktop\HL2DM Portal.bat")) { throw 'launcher missing' }
+          Remove-Item 'pkg\server.txt'
+
+          Write-Host '== install given the sourcemods folder itself'
+          $mods = Join-Path $env:RUNNER_TEMP 'Other\sourcemods'
+          cmd /c "pkg\install.bat `"$mods`"" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'install into a sourcemods folder failed' }
+          if (-not (Test-Path "$mods\hl2dm_portal\bin\x64\client.dll")) { throw 'not installed into the sourcemods folder' }
+
+          Write-Host '== server kit on a fake HL2DM server'
+          $srv = Join-Path $env:RUNNER_TEMP 'srcds'
+          New-Item -ItemType Directory -Force "$srv\hl2mp" | Out-Null
+          New-Item -ItemType File -Force "$srv\srcds_win64.exe" | Out-Null
+          cmd /c "pkg\server\install_server.bat `"$srv`" 27020" | Out-Host
+          if ((Get-Content "$srv\hl2dm_portal\gameinfo.txt" -Raw) -notmatch 'all_source_engine_paths') { throw 'server gameinfo not replaced' }
+          if (-not (Test-Path "$srv\hl2dm_portal\bin\x64\server_srv.dll")) { throw 'server_srv.dll missing' }
+          if ((Get-Content "$srv\start_portal_server.bat" -Raw) -notmatch 'srcds_win64\.exe -console -game hl2dm_portal -port 27020') { throw 'start script wrong' }
 
           Write-Host '== reinstall while client.dll is locked for 8 s (retries should win)'
           (Get-Item $src).LastWriteTime = Get-Date
