@@ -313,10 +313,21 @@ bool UTIL_HL2MPPortal_TracePlayerHull( const Vector &vecStart, const Vector &vec
 
 		if ( !bValidEnd )
 		{
-			// Moving sideways into the rim: stop, pushing back toward the hole.
+			// Not through the plane yet: it's the wall around the hole, which a
+			// normal trace handles (with a real plane to slide along).
+			if ( flGapStart >= -PORTAL_CARVE_EPSILON )
+				continue;
+
+			// Through the hole and moving sideways into the rim: stop, pushing
+			// back toward the hole. Never leave a zero normal: that freezes the
+			// player (nothing to clip the velocity against).
 			Vector vecLateral = vecEnd - vecStart;
 			vecLateral[k] = 0.0f;
-			VectorNormalize( vecLateral );
+			if ( VectorNormalize( vecLateral ) < 1e-4f )
+			{
+				vecLateral = vec3_origin;
+				vecLateral[k] = -flSign;	// normal points out of the wall
+			}
 			pm.fraction = 0.0f;
 			pm.plane.normal = -vecLateral;
 #ifdef CLIENT_DLL

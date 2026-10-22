@@ -219,6 +219,18 @@ private:
 		cmd.viewangles = m_angBot;
 		cmd.forwardmove = m_bBotWalk ? 200.0f : 0.0f;
 		cmd.buttons = m_bBotWalk ? IN_FORWARD : 0;
+
+		// Until it's through, steer onto the wall portal's center line (like a
+		// player aiming for it), so the test measures centered walk-ins.
+		if ( m_bBotWalk && m_flTransitTime < 0.0f && m_hWall )
+		{
+			Vector vecRight;
+			AngleVectors( m_angBot, NULL, &vecRight, NULL );
+			float flOffset = DotProduct( pBot->GetAbsOrigin() - m_hWall->GetAbsOrigin(), vecRight );
+			cmd.sidemove = clamp( -flOffset * 20.0f, -200.0f, 200.0f );
+			if ( cmd.sidemove != 0.0f )
+				cmd.buttons |= ( cmd.sidemove > 0.0f ) ? IN_MOVERIGHT : IN_MOVELEFT;
+		}
 		pBot->ProcessUsercmds( &cmd, 1, 1, 0, false );
 
 		if ( !m_bBotWalk || !m_hFloor )
@@ -443,7 +455,7 @@ private:
 			pBot->SnapEyeAngles( m_angBot );
 
 			Vector vecBottom = m_hWall->GetAbsOrigin() - Vector( 0, 0, HL2MP_PORTAL_HALF_HEIGHT );
-			Msg( "PORTALTEST info wall portal bottom z %.1f, bot feet z %.1f\n", vecBottom.z, vecStart.z );
+			Msg( "PORTALTEST info wall portal at (%.1f %.1f %.1f) bottom z %.1f, bot feet z %.1f\n", m_hWall->GetAbsOrigin().x, m_hWall->GetAbsOrigin().y, m_hWall->GetAbsOrigin().z, vecBottom.z, vecStart.z );
 
 			// The bot carries a box with +use; it must stay held through the portal.
 			{
