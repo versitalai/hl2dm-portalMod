@@ -1,0 +1,28 @@
+{
+  "port": 4747,
+  "host": "127.0.0.1",
+  "token": "",
+  "workdir": "",
+  "historyMessages": 20,
+  "mock": false,
+  "collab": {
+    "lead": "claude",
+    "maxRounds": 4
+  },
+  "agents": {
+    "claude": {
+      "name": "Claude",
+      "color": "#d97757",
+      "command": "claude",
+      "args": ["-p", "--output-format", "text", "--permission-mode", "acceptEdits"],
+      "timeoutSec": 900
+    },
+    "codex": {
+      "name": "Codex",
+      "color": "#10a37f",
+      "command": "codex",
+      "args": ["exec", "--skip-git-repo-check", "--sandbox", "workspace-write", "--color", "never", "--output-last-message", "{outfile}", "-"],
+      "timeoutSec": 900
+    }
+  }
+}

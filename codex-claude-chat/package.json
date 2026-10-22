@@ -1,0 +1,14 @@
+{
+  "name": "codex-claude-chat",
+  "version": "1.0.0",
+  "description": "Local chat room where you, Claude Code and OpenAI Codex talk. @ping one AI, or @Both to have them sync and answer together.",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server.js --open",
+    "mock": "node server.js --mock --open",
+    "doctor": "node doctor.js",
+    "test": "node test/smoke.js"
+  }
+}
