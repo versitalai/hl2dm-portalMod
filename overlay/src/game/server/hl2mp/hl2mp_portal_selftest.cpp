@@ -36,6 +36,7 @@ public:
 		m_flNextBotLog = 0.0f;
 		m_flTransitTime = -1.0f;
 		m_bRocketThrough = false;
+		m_nBotTickLog = 0;
 		m_bSnapFirst = m_bHeldAfterTransit = false;
 	}
 
@@ -222,6 +223,23 @@ private:
 
 		if ( !m_bBotWalk || !m_hFloor )
 			return;
+
+		// Per-tick trace near the wall: did the command run (tickbase), what
+		// holds it (flags, ground, physics shadow)?
+		if ( m_nBotTickLog < 40 && ( pBot->GetAbsOrigin() - m_hWall->GetAbsOrigin() ).Length2D() < 40.0f )
+		{
+			m_nBotTickLog++;
+			Vector o = pBot->GetAbsOrigin();
+			Vector vecShadow( 0, 0, 0 );
+			if ( pBot->VPhysicsGetObject() )
+			{
+				pBot->VPhysicsGetObject()->GetPosition( &vecShadow, NULL );
+			}
+			CBaseEntity *pGround = pBot->GetGroundEntity();
+			Msg( "PORTALTEST tick %d tickbase %d y %.2f z %.2f vel (%.0f %.0f %.0f) flags 0x%x ground %s shadow (%.1f %.1f %.1f) move %d\n",
+				gpGlobals->tickcount, (int)TIME_TO_TICKS( pBot->GetTimeBase() ), o.y, o.z, pBot->GetAbsVelocity().x, pBot->GetAbsVelocity().y, pBot->GetAbsVelocity().z,
+				pBot->GetFlags(), pGround ? pGround->GetClassname() : "none", vecShadow.x, vecShadow.y, vecShadow.z, pBot->GetMoveType() );
+		}
 
 		float flDist = ( pBot->WorldSpaceCenter() - m_hFloor->GetAbsOrigin() ).Length();
 		m_flBotClosest = MIN( m_flBotClosest, flDist );
@@ -478,6 +496,7 @@ private:
 	float	m_flTransitTime;
 	bool	m_bSnapFirst;
 	bool	m_bRocketThrough;
+	int		m_nBotTickLog;
 	bool	m_bHeldAfterTransit;
 	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan, m_hHeldBox;
 };
