@@ -35,6 +35,7 @@ public:
 		m_flBotClosest = FLT_MAX;
 		m_flNextBotLog = 0.0f;
 		m_flTransitTime = -1.0f;
+		m_bRocketThrough = false;
 		m_bSnapFirst = m_bHeldAfterTransit = false;
 	}
 
@@ -62,6 +63,12 @@ public:
 		}
 
 		DriveBot();
+
+		// Things that go through and then blow up or fly off: note it while they exist.
+		if ( m_hRocket && CHL2MPPortal::WasTeleported( m_hRocket ) )
+		{
+			m_bRocketThrough = true;
+		}
 
 		// Wall clock, not curtime: curtime stops if the server stops simulating.
 		if ( Plat_FloatTime() > m_flRealDeadline )
@@ -240,6 +247,28 @@ private:
 			Vector v = pBot->GetAbsOrigin();
 			Msg( "PORTALTEST info bot at (%.0f %.0f %.0f) vel %.0f dist_to_exit %.0f holding=%d\n", v.x, v.y, v.z, pBot->GetAbsVelocity().Length(), flDist,
 				m_hHeldBox ? pHL2Bot->IsHoldingEntity( m_hHeldBox ) : -1 );
+
+			// What would stop it moving forward 4 units right now?
+			Vector vecFwd;
+			AngleVectors( m_angBot, &vecFwd );
+			vecFwd.z = 0;
+			VectorNormalize( vecFwd );
+			trace_t tr;
+			bool bPortal = UTIL_HL2MPPortal_TracePlayerHull( v, v + vecFwd * 4, VEC_HULL_MIN, VEC_HULL_MAX, MASK_PLAYERSOLID, pBot, COLLISION_GROUP_PLAYER_MOVEMENT, tr );
+			if ( !bPortal )
+			{
+				UTIL_TraceHull( v, v + vecFwd * 4, VEC_HULL_MIN, VEC_HULL_MAX, MASK_PLAYERSOLID, pBot, COLLISION_GROUP_PLAYER_MOVEMENT, &tr );
+			}
+			if ( tr.fraction < 1.0f || tr.startsolid )
+			{
+				Msg( "PORTALTEST info   blocked: carved=%d frac=%.2f startsolid=%d ent=%s normal (%.2f %.2f %.2f)\n", bPortal, tr.fraction, tr.startsolid,
+					tr.m_pEnt ? tr.m_pEnt->GetClassname() : "none", tr.plane.normal.x, tr.plane.normal.y, tr.plane.normal.z );
+			}
+			if ( m_hHeldBox )
+			{
+				Vector b = m_hHeldBox->WorldSpaceCenter();
+				Msg( "PORTALTEST info   box at (%.0f %.0f %.0f)\n", b.x, b.y, b.z );
+			}
 		}
 	}
 
@@ -372,7 +401,7 @@ private:
 
 		case 4:
 		{
-			Result( "rocket_through_portal", m_hRocket && CHL2MPPortal::WasTeleported( m_hRocket ), "alive=%d", m_hRocket.Get() != NULL );
+			Result( "rocket_through_portal", m_bRocketThrough, "alive=%d", m_hRocket.Get() != NULL );
 
 			// A player walking into the wall portal goes through in its own
 			// movement (no snap teleport) and comes out of the floor portal.
@@ -448,6 +477,7 @@ private:
 	float	m_flNextBotLog;
 	float	m_flTransitTime;
 	bool	m_bSnapFirst;
+	bool	m_bRocketThrough;
 	bool	m_bHeldAfterTransit;
 	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan, m_hHeldBox;
 };
