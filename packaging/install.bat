@@ -86,10 +86,12 @@ for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "[Environment]
 if not defined DESKTOP set "DESKTOP=%USERPROFILE%\Desktop"
 if not exist "%DESKTOP%\" goto :done
 call :launcher "%DESKTOP%\HL2DM Portal.bat" ""
+rem Slow PC: applies the lowest graphics settings (cfg\potato.cfg); they're saved.
+call :launcher "%DESKTOP%\HL2DM Portal (low graphics).bat" "+exec potato"
 set "SERVER="
 if exist "%HERE%server.txt" set /p SERVER=<"%HERE%server.txt"
 if defined SERVER call :launcher "%DESKTOP%\Join HL2DM Portal server.bat" "+connect %SERVER%"
-echo Desktop shortcut: HL2DM Portal
+echo Desktop shortcuts: HL2DM Portal, HL2DM Portal (low graphics)
 if defined SERVER echo Desktop shortcut: Join HL2DM Portal server (%SERVER%)
 
 :done

@@ -3,6 +3,13 @@
 ## 0.4.1 — unreleased
 
 ### Added
+- Graphics settings for slow PCs: `cl_portal_quality` 0 off / 1 low / 2 medium / 3 high / 4 auto (default), also in
+  Options > Multiplayer > Advanced. Levels set the number of live views, portal-in-portal views, view resolution and a
+  minimum on-screen size; auto steps between them to hold `cl_portal_auto_fps`. `cl_portal_resolution` caps view
+  resolution.
+- Portal views only render the pixels the portal covers on screen (`cl_portal_scissor`), and water in them is drawn
+  cheap below High.
+- `cfg/potato.cfg` (lowest settings for the whole game) and a "HL2DM Portal (low graphics)" desktop launcher.
 - Server kit in the release (`server/`): `install_server.sh` (Linux) and `install_server.bat` (Windows) add the mod to
   an existing HL2DM dedicated server and write `start_portal_server.*` for a second server on port 27016. Updates keep
   `server.cfg` and the port/map. CI sets up its self-test server with it, so the Linux kit is tested every push.

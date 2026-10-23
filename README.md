@@ -70,12 +70,36 @@ Built for it: HL2DM is multiplayer-only, and everything runs server-authoritativ
 
 The gun is in weapon slot 1 (with crowbar / gravity gun). Portals are removed when the gun is removed (e.g. on death).
 
+## Graphics settings (slow PCs)
+
+Seeing through a portal means drawing the scene again, so portals are the mod's main cost. Pick a quality in
+**Options > Multiplayer > Advanced** ("Portal quality"), or with `cl_portal_quality` in the console:
+
+| `cl_portal_quality` | Live views | Portal-in-portal | View resolution | Solid if smaller than |
+|---|---|---|---|---|
+| 0 Off | none (solid tinted portals) | | | |
+| 1 Low | 1 | no | 50% | 12% of the screen |
+| 2 Medium | 2 | no | 75% | 6% |
+| 3 High | 2 | yes | 100% | always live |
+| **4 Auto** (default) | moves between these one step at a time to hold `cl_portal_auto_fps` (60) | | | |
+
+At every level only the part of a view the portal covers on screen is drawn, and water seen through a portal is
+drawn cheap (except on High). For the whole game, start once with the **HL2DM Portal (low graphics)** desktop shortcut
+(or `exec potato` in the console): lowest textures, models, shadows, water, effects, and auto portals at 45 fps. It's
+saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
+
 ## ConVars
 
 | ConVar | Default | Side | Meaning |
 |---|---|---|---|
+| `cl_portal_quality` | 4 | client | 0 off, 1 low, 2 medium, 3 high, 4 auto (see above) |
+| `cl_portal_auto_fps` | 60 | client | Frame rate auto quality tries to hold |
+| `cl_portal_resolution` | 1 | client | Cap on portal view resolution (0.25-1 of the screen) |
+| `cl_portal_scissor` | 1 | client | Only render the part of a view the portal covers |
+| `cl_portal_quality_debug` | 0 | client | Print auto quality changes |
 | `cl_portal_render_views` | 1 | client | Render live views through portals (0 = solid color) |
-| `cl_portal_max_views` | 2 | client | Max portals rendered see-through per frame, closest first (max 2) |
+| `cl_portal_max_views` | 2 | client | Cap on portals rendered see-through per frame, closest first (max 2) |
+| `cl_portal_recursion` | 1 | client | Allow live portal-in-portal views (High only) |
 | `cl_portal_draw_local_player` | 1 | client | Draw your own model in portal views |
 | `sv_portal_lookahead` | 3 | server | Ticks of lookahead for fast movers |
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |

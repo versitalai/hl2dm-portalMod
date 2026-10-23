@@ -190,6 +190,7 @@ jobs:
           if ($join -notmatch '\+connect 203\.0\.113\.5:27016') { throw "join launcher wrong: $join" }
           if ($join -notmatch '-applaunch 243750 -game') { throw "join launcher wrong: $join" }
           if (-not (Test-Path "$desktop\HL2DM Portal.bat")) { throw 'launcher missing' }
+          if ((Get-Content "$desktop\HL2DM Portal (low graphics).bat" -Raw) -notmatch '\+exec potato') { throw 'low graphics launcher wrong' }
           Remove-Item 'pkg\server.txt'
 
           Write-Host '== install given the sourcemods folder itself'

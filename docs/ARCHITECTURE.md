@@ -113,7 +113,8 @@ more than the stock tolerance (0.001 of 2048 units), or the number of portals on
 
 Classic render-to-texture portal, done with stock SDK pieces (no custom shaders, no extra content):
 
-1. **Render targets**: `CHL2MPRenderTargets` creates two full-framebuffer render targets at startup.
+1. **Render targets**: `CHL2MPRenderTargets` creates four full-framebuffer render targets at startup (two views, two
+   portal-in-portal views).
 2. **Pick portals**: `DrawHL2MPPortalViews` (called from `CViewRender::RenderView` right before the main scene) takes
    open, front-facing, on-screen portals, closest first, up to `cl_portal_max_views`.
 3. **Virtual camera**: main view origin/angles transformed by `M`. Same FOV and viewport size as the main view.
@@ -129,6 +130,21 @@ Classic render-to-texture portal, done with stock SDK pieces (no custom shaders,
    so entities over there are networked and actually show up in the view.
 
 Views run every frame, so what you see through a portal is live.
+
+### Cost and quality levels
+
+Each live view redraws the scene, so views are budgeted by `cl_portal_quality` (`viewrender.cpp`,
+`s_HL2MPPortalQuality`): a ladder of levels, cheapest first, each setting the number of views, portal-in-portal
+recursion, view resolution and a minimum on-screen size. Presets 1-3 are entries of it; 4 (auto) moves one step down
+when the smoothed frame time is 10% over `1/cl_portal_auto_fps` while views are drawn, and one step up after 2 s with
+20% headroom. A raise followed by a drop within 3 s blocks raising for 30 s, so it doesn't flicker between levels.
+- **Resolution**: views render into the top left of their target at a fraction of the screen size with the same
+  projection, so the screen-space mapping just scales (`g_flHL2MPPortalUScale/VScale`). Fill cost ~ resolution².
+- **Scissor**: the portal's screen rect (from its corners, padded 2 px) scissors the view; pixels outside it are never
+  sampled. CPU cost (culling, draw calls) is still that of a full view.
+- **Small portals** (below the level's minimum size) draw solid, as do portals beyond the view budget.
+- **Water** in portal views is forced cheap below the top level (like Valve's Portal), skipping its own
+  reflection/refraction views.
 
 ## Portal ownership
 
