@@ -127,6 +127,21 @@ public:
 #endif
 
 private:
+	// The portal's frame only changes when it's placed somewhere, but it's read
+	// constantly (every player movement trace, bullet, held object, rendered
+	// frame), so directions, plane axis and the to-linked matrix are cached and
+	// rebuilt only when origin or angles change.
+	void			UpdateFrameCache() const;
+	mutable Vector	m_vecCacheOrigin;
+	mutable QAngle	m_angCacheAngles;
+	mutable Vector	m_vecCacheForward, m_vecCacheRight, m_vecCacheUp;
+	mutable int		m_iCacheAxis;			// world axis of the normal, -1 if none
+	mutable float	m_flCacheAxisSign;
+	mutable int		m_nFrameVersion;		// unique across portals; 0 = not computed
+	mutable VMatrix	m_matCacheToLinked;
+	mutable int		m_nMatVersion;			// m_nFrameVersion it was built for
+	mutable int		m_nMatLinkedVersion;	// and the linked portal's
+
 	CNetworkVar( bool, m_bActivated );
 	CNetworkVar( int, m_iPortalType );
 	CNetworkHandle( CHL2MPPortal, m_hLinkedPortal );

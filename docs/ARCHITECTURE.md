@@ -145,6 +145,15 @@ when the smoothed frame time is 10% over `1/cl_portal_auto_fps` while views are 
 - **Small portals** (below the level's minimum size) draw solid, as do portals beyond the view budget.
 - **Water** in portal views is forced cheap below the top level (like Valve's Portal), skipping its own
   reflection/refraction views.
+- **Meshes** (fill, tunnel, rim) are indexed dynamic meshes built from a precomputed unit circle; the live fill uses
+  10 rings within 256 units, 6 within 1024, 3 beyond; the solid fill 1.
+
+### Frame cache
+
+`CHL2MPPortal` caches its forward/right/up, the world axis of its normal and `MatrixThisToLinked()`, keyed on its
+origin/angles (`UpdateFrameCache`, compared on each read) and a global version counter, so a re-created portal never
+reuses a stale matrix. Every accessor (`GetPortalVectors`, `GetSurfaceNormal`, `GetPlaneAxis`, `IsPointInEllipse`,
+`MatrixThisToLinked`) goes through it; it works the same on server and client (no hooks on placement or networking).
 
 ## Portal ownership
 

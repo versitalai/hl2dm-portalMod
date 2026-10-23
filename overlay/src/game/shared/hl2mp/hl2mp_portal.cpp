@@ -88,6 +88,10 @@ CHL2MPPortal::CHL2MPPortal()
 	m_bActivated = false;
 	m_iPortalType = HL2MP_PORTAL_BLUE;
 	m_hLinkedPortal = NULL;
+	m_nFrameVersion = 0;
+	m_nMatVersion = m_nMatLinkedVersion = 0;
+	m_iCacheAxis = -1;
+	m_flCacheAxisSign = 1.0f;
 #ifdef CLIENT_DLL
 	for ( int i = 0; i < HL2MP_PORTAL_MAX_DEPTH; i++ )
 	{
@@ -122,16 +126,49 @@ bool CHL2MPPortal::IsOpen() const
 	return m_bActivated && pLinked && pLinked->IsActivated();
 }
 
+void CHL2MPPortal::UpdateFrameCache() const
+{
+	const Vector &vOrigin = GetAbsOrigin();
+	const QAngle &angles = GetAbsAngles();
+	if ( m_nFrameVersion != 0 && vOrigin == m_vecCacheOrigin && angles == m_angCacheAngles )
+		return;
+
+	m_vecCacheOrigin = vOrigin;
+	m_angCacheAngles = angles;
+	AngleVectors( angles, &m_vecCacheForward, &m_vecCacheRight, &m_vecCacheUp );
+
+	m_iCacheAxis = -1;
+	for ( int i = 0; i < 3; i++ )
+	{
+		if ( fabs( m_vecCacheForward[i] ) > 0.999f )
+		{
+			m_iCacheAxis = i;
+			m_flCacheAxisSign = ( m_vecCacheForward[i] > 0.0f ) ? 1.0f : -1.0f;
+			break;
+		}
+	}
+
+	// Global counter: a portal freed and re-created at the same address never
+	// matches a matrix cached for the old one.
+	static int s_nFrameVersions = 0;
+	m_nFrameVersion = ++s_nFrameVersions;
+}
+
 void CHL2MPPortal::GetPortalVectors( Vector *pForward, Vector *pRight, Vector *pUp ) const
 {
-	AngleVectors( GetAbsAngles(), pForward, pRight, pUp );
+	UpdateFrameCache();
+	if ( pForward )
+		*pForward = m_vecCacheForward;
+	if ( pRight )
+		*pRight = m_vecCacheRight;
+	if ( pUp )
+		*pUp = m_vecCacheUp;
 }
 
 Vector CHL2MPPortal::GetSurfaceNormal() const
 {
-	Vector vForward;
-	AngleVectors( GetAbsAngles(), &vForward );
-	return vForward;
+	UpdateFrameCache();
+	return m_vecCacheForward;
 }
 
 VMatrix CHL2MPPortal::MatrixThisToLinked() const
@@ -142,6 +179,11 @@ VMatrix CHL2MPPortal::MatrixThisToLinked() const
 	CHL2MPPortal *pLinked = GetLinkedPortal();
 	if ( !pLinked )
 		return matResult;
+
+	UpdateFrameCache();
+	pLinked->UpdateFrameCache();
+	if ( m_nMatVersion == m_nFrameVersion && m_nMatLinkedVersion == pLinked->m_nFrameVersion )
+		return m_matCacheToLinked;
 
 	VMatrix matThisToWorld, matWorldToThis, matLinkedToWorld, matRotate;
 	matThisToWorld.SetupMatrixOrgAngles( GetAbsOrigin(), GetAbsAngles() );
@@ -154,17 +196,19 @@ VMatrix CHL2MPPortal::MatrixThisToLinked() const
 	matRotate.m[1][1] = -1.0f;
 
 	matResult = matLinkedToWorld * matRotate * matWorldToThis;
+
+	m_matCacheToLinked = matResult;
+	m_nMatVersion = m_nFrameVersion;
+	m_nMatLinkedVersion = pLinked->m_nFrameVersion;
 	return matResult;
 }
 
 bool CHL2MPPortal::IsPointInEllipse( const Vector &vPoint, float flScale ) const
 {
-	Vector vRight, vUp;
-	GetPortalVectors( NULL, &vRight, &vUp );
-
-	Vector vDelta = vPoint - GetAbsOrigin();
-	float flX = DotProduct( vDelta, vRight ) / ( HL2MP_PORTAL_HALF_WIDTH * flScale );
-	float flY = DotProduct( vDelta, vUp ) / ( HL2MP_PORTAL_HALF_HEIGHT * flScale );
+	UpdateFrameCache();
+	Vector vDelta = vPoint - m_vecCacheOrigin;
+	float flX = DotProduct( vDelta, m_vecCacheRight ) / ( HL2MP_PORTAL_HALF_WIDTH * flScale );
+	float flY = DotProduct( vDelta, m_vecCacheUp ) / ( HL2MP_PORTAL_HALF_HEIGHT * flScale );
 	return ( flX * flX + flY * flY ) <= 1.0f;
 }
 
@@ -199,18 +243,14 @@ CHL2MPPortal *CHL2MPPortal::FindPortalAtSurface( const Vector &vPoint, const Vec
 
 bool CHL2MPPortal::GetPlaneAxis( int *pAxis, float *pSign, float *pDist ) const
 {
-	Vector vNormal = GetSurfaceNormal();
-	for ( int i = 0; i < 3; i++ )
-	{
-		if ( fabs( vNormal[i] ) > 0.999f )
-		{
-			*pAxis = i;
-			*pSign = vNormal[i] > 0.0f ? 1.0f : -1.0f;
-			*pDist = GetAbsOrigin()[i];
-			return true;
-		}
-	}
-	return false;
+	UpdateFrameCache();
+	if ( m_iCacheAxis < 0 )
+		return false;
+
+	*pAxis = m_iCacheAxis;
+	*pSign = m_flCacheAxisSign;
+	*pDist = m_vecCacheOrigin[m_iCacheAxis];
+	return true;
 }
 
 bool CHL2MPPortal::CanCarve() const
@@ -1152,6 +1192,8 @@ void C_HL2MPPortal::GetRenderBounds( Vector &mins, Vector &maxs )
 // Ellipse tessellation. The view texture is sampled in screen space, which
 // the rasterizer can't do exactly (it interpolates perspective-correct), so
 // the fill is split into many small triangles to keep the error invisible.
+// The error shrinks with distance (less perspective across the portal), so
+// far portals get fewer rings.
 #define PORTAL_MESH_RINGS		10
 #define PORTAL_MESH_SEGMENTS	40
 
@@ -1161,10 +1203,27 @@ struct PortalVertex_t
 	float	u, v;
 };
 
+// Unit circle, computed once.
+static float s_flPortalCos[PORTAL_MESH_SEGMENTS];
+static float s_flPortalSin[PORTAL_MESH_SEGMENTS];
+static void InitPortalCircle()
+{
+	static bool s_bInit = false;
+	if ( s_bInit )
+		return;
+	for ( int i = 0; i < PORTAL_MESH_SEGMENTS; i++ )
+	{
+		float flAngle = ( 2.0f * M_PI * i ) / PORTAL_MESH_SEGMENTS;
+		s_flPortalCos[i] = cos( flAngle );
+		s_flPortalSin[i] = sin( flAngle );
+	}
+	s_bInit = true;
+}
+
 static void ComputePortalVertex( const Vector &vCenter, const Vector &vRight, const Vector &vUp, float flRadius, int iSegment, bool bScreenUV, PortalVertex_t &out )
 {
-	float flAngle = ( 2.0f * M_PI * iSegment ) / PORTAL_MESH_SEGMENTS;
-	out.vPos = vCenter + vRight * ( cos( flAngle ) * HL2MP_PORTAL_HALF_WIDTH * flRadius ) + vUp * ( sin( flAngle ) * HL2MP_PORTAL_HALF_HEIGHT * flRadius );
+	iSegment %= PORTAL_MESH_SEGMENTS;
+	out.vPos = vCenter + vRight * ( s_flPortalCos[iSegment] * HL2MP_PORTAL_HALF_WIDTH * flRadius ) + vUp * ( s_flPortalSin[iSegment] * HL2MP_PORTAL_HALF_HEIGHT * flRadius );
 
 	if ( bScreenUV )
 	{
@@ -1188,55 +1247,54 @@ static void EmitPortalVertex( CMeshBuilder &meshBuilder, const PortalVertex_t &v
 	meshBuilder.AdvanceVertex();
 }
 
-// Filled ellipse from the center out to flOuterRadius.
-static void DrawPortalFill( IMaterial *pMaterial, const Vector &vCenter, const Vector &vRight, const Vector &vUp, bool bScreenUV, const color32 &color )
+// Two triangles between ring vertices: inner (i0, i1) and outer (o0, o1).
+static void EmitPortalQuad( CMeshBuilder &meshBuilder, int i0, int i1, int o0, int o1 )
 {
+	meshBuilder.FastIndex( i0 ); meshBuilder.FastIndex( o0 ); meshBuilder.FastIndex( o1 );
+	meshBuilder.FastIndex( i0 ); meshBuilder.FastIndex( o1 ); meshBuilder.FastIndex( i1 );
+}
+
+// Filled ellipse, nRings rings from the center out. Indexed: each vertex is
+// computed (and projected) once.
+static void DrawPortalFill( IMaterial *pMaterial, const Vector &vCenter, const Vector &vRight, const Vector &vUp, bool bScreenUV, const color32 &color, int nRings )
+{
+	InitPortalCircle();
+	nRings = clamp( nRings, 1, PORTAL_MESH_RINGS );
+	const int S = PORTAL_MESH_SEGMENTS;
+
 	CMatRenderContextPtr pRenderContext( materials );
 	pRenderContext->Bind( pMaterial );
 	IMesh *pMesh = pRenderContext->GetDynamicMesh();
 
-	int nTriangles = PORTAL_MESH_SEGMENTS + ( PORTAL_MESH_RINGS - 1 ) * PORTAL_MESH_SEGMENTS * 2;
-
 	CMeshBuilder meshBuilder;
-	meshBuilder.Begin( pMesh, MATERIAL_TRIANGLES, nTriangles );
+	meshBuilder.Begin( pMesh, MATERIAL_TRIANGLES, 1 + nRings * S, 3 * S + ( nRings - 1 ) * S * 6 );
 
-	PortalVertex_t center;
-	center.vPos = vCenter;
-	center.u = center.v = 0.0f;
-	if ( bScreenUV )
+	// Vertex 0 is the center, then ring r (1..nRings) segment i is 1 + (r - 1) * S + i.
+	PortalVertex_t vert;
+	ComputePortalVertex( vCenter, vRight, vUp, 0.0f, 0, bScreenUV, vert );
+	EmitPortalVertex( meshBuilder, vert, color );
+	for ( int iRing = 1; iRing <= nRings; iRing++ )
 	{
-		ComputePortalVertex( vCenter, vRight, vUp, 0.0f, 0, true, center );
+		float flRadius = (float)iRing / nRings;
+		for ( int iSeg = 0; iSeg < S; iSeg++ )
+		{
+			ComputePortalVertex( vCenter, vRight, vUp, flRadius, iSeg, bScreenUV, vert );
+			EmitPortalVertex( meshBuilder, vert, color );
+		}
 	}
 
-	for ( int iRing = 0; iRing < PORTAL_MESH_RINGS; iRing++ )
+	for ( int iSeg = 0; iSeg < S; iSeg++ )
 	{
-		float flInner = (float)iRing / PORTAL_MESH_RINGS;
-		float flOuter = (float)( iRing + 1 ) / PORTAL_MESH_RINGS;
-
-		for ( int iSeg = 0; iSeg < PORTAL_MESH_SEGMENTS; iSeg++ )
+		meshBuilder.FastIndex( 0 ); meshBuilder.FastIndex( 1 + iSeg ); meshBuilder.FastIndex( 1 + ( iSeg + 1 ) % S );
+	}
+	for ( int iRing = 2; iRing <= nRings; iRing++ )
+	{
+		int iInner = 1 + ( iRing - 2 ) * S;
+		int iOuter = 1 + ( iRing - 1 ) * S;
+		for ( int iSeg = 0; iSeg < S; iSeg++ )
 		{
-			PortalVertex_t a, b, c, d;
-			ComputePortalVertex( vCenter, vRight, vUp, flOuter, iSeg, bScreenUV, a );
-			ComputePortalVertex( vCenter, vRight, vUp, flOuter, iSeg + 1, bScreenUV, b );
-
-			if ( iRing == 0 )
-			{
-				EmitPortalVertex( meshBuilder, center, color );
-				EmitPortalVertex( meshBuilder, a, color );
-				EmitPortalVertex( meshBuilder, b, color );
-				continue;
-			}
-
-			ComputePortalVertex( vCenter, vRight, vUp, flInner, iSeg, bScreenUV, c );
-			ComputePortalVertex( vCenter, vRight, vUp, flInner, iSeg + 1, bScreenUV, d );
-
-			EmitPortalVertex( meshBuilder, c, color );
-			EmitPortalVertex( meshBuilder, a, color );
-			EmitPortalVertex( meshBuilder, b, color );
-
-			EmitPortalVertex( meshBuilder, c, color );
-			EmitPortalVertex( meshBuilder, b, color );
-			EmitPortalVertex( meshBuilder, d, color );
+			int iNext = ( iSeg + 1 ) % S;
+			EmitPortalQuad( meshBuilder, iInner + iSeg, iInner + iNext, iOuter + iSeg, iOuter + iNext );
 		}
 	}
 
@@ -1251,6 +1309,8 @@ static void DrawPortalFill( IMaterial *pMaterial, const Vector &vCenter, const V
 // surface) keeps showing the far side instead of the inside of the wall.
 static void DrawPortalTunnel( IMaterial *pMaterial, const Vector &vCenter, const Vector &vForward, const Vector &vRight, const Vector &vUp, float flDepth )
 {
+	InitPortalCircle();
+	const int S = PORTAL_MESH_SEGMENTS;
 	color32 white = { 255, 255, 255, 255 };
 	Vector vBack = vCenter - vForward * flDepth;
 
@@ -1259,30 +1319,26 @@ static void DrawPortalTunnel( IMaterial *pMaterial, const Vector &vCenter, const
 	IMesh *pMesh = pRenderContext->GetDynamicMesh();
 
 	CMeshBuilder meshBuilder;
-	meshBuilder.Begin( pMesh, MATERIAL_TRIANGLES, PORTAL_MESH_SEGMENTS * 3 );
+	meshBuilder.Begin( pMesh, MATERIAL_TRIANGLES, 2 * S + 1, S * 9 );
 
-	PortalVertex_t cap;
-	ComputePortalVertex( vBack, vRight, vUp, 0.0f, 0, true, cap );
-
-	for ( int iSeg = 0; iSeg < PORTAL_MESH_SEGMENTS; iSeg++ )
+	// Front ring 0..S-1, back ring S..2S-1, cap center 2S.
+	PortalVertex_t vert;
+	for ( int iRing = 0; iRing < 2; iRing++ )
 	{
-		PortalVertex_t a, b, c, d;
-		ComputePortalVertex( vCenter, vRight, vUp, 1.0f, iSeg, true, a );
-		ComputePortalVertex( vCenter, vRight, vUp, 1.0f, iSeg + 1, true, b );
-		ComputePortalVertex( vBack, vRight, vUp, 1.0f, iSeg, true, c );
-		ComputePortalVertex( vBack, vRight, vUp, 1.0f, iSeg + 1, true, d );
+		for ( int iSeg = 0; iSeg < S; iSeg++ )
+		{
+			ComputePortalVertex( iRing ? vBack : vCenter, vRight, vUp, 1.0f, iSeg, true, vert );
+			EmitPortalVertex( meshBuilder, vert, white );
+		}
+	}
+	ComputePortalVertex( vBack, vRight, vUp, 0.0f, 0, true, vert );
+	EmitPortalVertex( meshBuilder, vert, white );
 
-		EmitPortalVertex( meshBuilder, a, white );
-		EmitPortalVertex( meshBuilder, c, white );
-		EmitPortalVertex( meshBuilder, d, white );
-
-		EmitPortalVertex( meshBuilder, a, white );
-		EmitPortalVertex( meshBuilder, d, white );
-		EmitPortalVertex( meshBuilder, b, white );
-
-		EmitPortalVertex( meshBuilder, cap, white );
-		EmitPortalVertex( meshBuilder, d, white );
-		EmitPortalVertex( meshBuilder, c, white );
+	for ( int iSeg = 0; iSeg < S; iSeg++ )
+	{
+		int iNext = ( iSeg + 1 ) % S;
+		EmitPortalQuad( meshBuilder, iSeg, iNext, S + iSeg, S + iNext );
+		meshBuilder.FastIndex( 2 * S ); meshBuilder.FastIndex( S + iNext ); meshBuilder.FastIndex( S + iSeg );
 	}
 
 	meshBuilder.End();
@@ -1292,6 +1348,8 @@ static void DrawPortalTunnel( IMaterial *pMaterial, const Vector &vCenter, const
 // Glowing band from flInner (alpha 0) to flMid (full) to flOuter (alpha 0).
 static void DrawPortalRim( const Vector &vCenter, const Vector &vRight, const Vector &vUp, const color32 &color )
 {
+	InitPortalCircle();
+	const int S = PORTAL_MESH_SEGMENTS;
 	const float flRadii[3] = { 0.86f, 1.0f, 1.08f };
 	const unsigned char alphas[3] = { 0, 255, 0 };
 
@@ -1300,34 +1358,29 @@ static void DrawPortalRim( const Vector &vCenter, const Vector &vRight, const Ve
 	IMesh *pMesh = pRenderContext->GetDynamicMesh();
 
 	CMeshBuilder meshBuilder;
-	meshBuilder.Begin( pMesh, MATERIAL_TRIANGLES, PORTAL_MESH_SEGMENTS * 4 );
+	meshBuilder.Begin( pMesh, MATERIAL_TRIANGLES, 3 * S, 2 * S * 6 );
+
+	// Ring r segment i is r * S + i.
+	PortalVertex_t vert;
+	for ( int iRing = 0; iRing < 3; iRing++ )
+	{
+		// Additive: scale color by alpha so the falloff shows.
+		color32 ringColor = color;
+		ringColor.a = alphas[iRing];
+		ringColor.r = ( color.r * ringColor.a ) / 255; ringColor.g = ( color.g * ringColor.a ) / 255; ringColor.b = ( color.b * ringColor.a ) / 255;
+		for ( int iSeg = 0; iSeg < S; iSeg++ )
+		{
+			ComputePortalVertex( vCenter, vRight, vUp, flRadii[iRing], iSeg, false, vert );
+			EmitPortalVertex( meshBuilder, vert, ringColor );
+		}
+	}
 
 	for ( int iBand = 0; iBand < 2; iBand++ )
 	{
-		color32 inner = color;
-		color32 outer = color;
-		inner.a = alphas[iBand];
-		outer.a = alphas[iBand + 1];
-
-		// Additive: scale color by alpha so the falloff shows.
-		inner.r = ( color.r * inner.a ) / 255; inner.g = ( color.g * inner.a ) / 255; inner.b = ( color.b * inner.a ) / 255;
-		outer.r = ( color.r * outer.a ) / 255; outer.g = ( color.g * outer.a ) / 255; outer.b = ( color.b * outer.a ) / 255;
-
-		for ( int iSeg = 0; iSeg < PORTAL_MESH_SEGMENTS; iSeg++ )
+		for ( int iSeg = 0; iSeg < S; iSeg++ )
 		{
-			PortalVertex_t a, b, c, d;
-			ComputePortalVertex( vCenter, vRight, vUp, flRadii[iBand], iSeg, false, a );
-			ComputePortalVertex( vCenter, vRight, vUp, flRadii[iBand], iSeg + 1, false, b );
-			ComputePortalVertex( vCenter, vRight, vUp, flRadii[iBand + 1], iSeg, false, c );
-			ComputePortalVertex( vCenter, vRight, vUp, flRadii[iBand + 1], iSeg + 1, false, d );
-
-			EmitPortalVertex( meshBuilder, a, inner );
-			EmitPortalVertex( meshBuilder, c, outer );
-			EmitPortalVertex( meshBuilder, d, outer );
-
-			EmitPortalVertex( meshBuilder, a, inner );
-			EmitPortalVertex( meshBuilder, d, outer );
-			EmitPortalVertex( meshBuilder, b, inner );
+			int iNext = ( iSeg + 1 ) % S;
+			EmitPortalQuad( meshBuilder, iBand * S + iSeg, iBand * S + iNext, ( iBand + 1 ) * S + iSeg, ( iBand + 1 ) * S + iNext );
 		}
 	}
 
@@ -1364,7 +1417,10 @@ int C_HL2MPPortal::DrawModel( int flags )
 	{
 		color32 white = { 255, 255, 255, 255 };
 		DrawPortalTunnel( GetPortalViewMaterial( iSlot ), GetAbsOrigin(), vForward, vRight, vUp, 24.0f );
-		DrawPortalFill( GetPortalViewMaterial( iSlot ), vCenter, vRight, vUp, true, white );
+		// Close up the screen-space mapping needs fine tessellation; far away it's nearly affine.
+		float flDist = ( CurrentViewOrigin() - GetAbsOrigin() ).Length();
+		int nRings = ( flDist < 256.0f ) ? PORTAL_MESH_RINGS : ( flDist < 1024.0f ) ? 6 : 3;
+		DrawPortalFill( GetPortalViewMaterial( iSlot ), vCenter, vRight, vUp, true, white, nRings );
 	}
 	else
 	{
@@ -1375,7 +1431,8 @@ int C_HL2MPPortal::DrawModel( int flags )
 		else
 			fill = bBlue ? color32{ 10, 30, 70, 255 } : color32{ 70, 35, 5, 255 };
 
-		DrawPortalFill( GetPortalFillMaterial(), vCenter, vRight, vUp, false, fill );
+		// Solid color: no texture mapping to keep accurate.
+		DrawPortalFill( GetPortalFillMaterial(), vCenter, vRight, vUp, false, fill, 1 );
 	}
 
 	DrawPortalRim( vCenter + vForward * 0.1f, vRight, vUp, rimColor );

@@ -10,6 +10,14 @@
 - Portal views only render the pixels the portal covers on screen (`cl_portal_scissor`), and water in them is drawn
   cheap below High.
 - `cfg/potato.cfg` (lowest settings for the whole game) and a "HL2DM Portal (low graphics)" desktop launcher.
+
+### Changed (faster)
+- Portals cache their frame (directions, wall axis) and the portal-to-portal matrix, rebuilt only when they move.
+  These were recomputed with trig on every player movement trace (many per tick, and again in client prediction),
+  every bullet hitting a wall, every held-object update and every rendered portal.
+- Portal meshes are indexed and use a precomputed circle: each vertex is computed and projected once instead of up to
+  four times. Live fill: 1520 vertex computations -> 401 close up, 121 beyond 1024 units (fewer rings far away, where
+  the screen-space mapping error is invisible); solid fill 1520 -> 41; tunnel and rim about half.
 - Server kit in the release (`server/`): `install_server.sh` (Linux) and `install_server.bat` (Windows) add the mod to
   an existing HL2DM dedicated server and write `start_portal_server.*` for a second server on port 27016. Updates keep
   `server.cfg` and the port/map. CI sets up its self-test server with it, so the Linux kit is tested every push.
