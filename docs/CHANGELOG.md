@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.1 — unreleased
+## 0.4.1 — 2026-10-23
 
 ### Added
 - Graphics settings for slow PCs: `cl_portal_quality` 0 off / 1 low / 2 medium / 3 high / 4 auto (default), also in
