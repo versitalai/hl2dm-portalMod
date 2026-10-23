@@ -1,12 +1,15 @@
 # Roadmap and known limitations
 
 ## Known limitations
-- **Not play-tested yet.** Compiles and links; the math is unit-tested; runtime behavior needs a pass in game.
-- **Walls stay solid.** Entities are caught in front of the wall and moved, not carved through it. So nothing is ever
-  "half through" a portal, and you can't stand in one or poke a prop through partway.
+- **Props and projectiles** are caught in front of the wall and moved, not carved through it (players do walk into
+  axis-aligned portals). So a prop is never "half through" a portal.
 - **Big things fit anyway.** Only the center has to cross inside the ellipse; a prop wider than the portal still goes.
 - **Two live views per frame** (render target count). More open portals on screen draw as solid tinted ovals.
-- **No recursion.** A portal seen inside a portal view is solid color.
+- **One level of recursion** (High only). A portal inside a portal inside a portal is solid color.
+- **Performance settings aren't measured in game yet.** The quality ladder's numbers are estimates; a play-test on a
+  slow PC should tune them. Auto judges by total frame time, so on a PC that's slow without portals it settles on Off.
+- **Scissoring saves GPU fill, not CPU**: each live view still culls and submits a full scene. An off-center frustum
+  around the portal would cut that too.
 - **Screen-space UV approximation.** Fine tessellation hides it at normal distances; very close up, small seams are
   possible, as is a brief wall flash when the near plane crosses the portal.
 - **3D skybox** isn't drawn in portal views (2D sky only).

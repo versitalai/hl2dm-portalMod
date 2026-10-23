@@ -28,8 +28,20 @@ if [[ -z "$STEAM_DIR" || ! -d "$STEAM_DIR/steamapps" ]]; then
     echo "error: Steam not found. Pass it: ./install.sh --steam-dir /path/to/Steam"; exit 1
 fi
 
-DEST="$STEAM_DIR/steamapps/sourcemods/$MOD"
-mkdir -p "$STEAM_DIR/steamapps/sourcemods"
+# The folder Steam lists mods from; it can differ from <Steam>/steamapps/sourcemods.
+SOURCEMODS="$STEAM_DIR/steamapps/sourcemods"
+for reg in "$STEAM_DIR/../registry.vdf" "$HOME/.steam/registry.vdf"; do
+    if [[ -f "$reg" ]]; then
+        p="$(sed -n 's/.*"SourceModInstallPath"[[:space:]]*"\([^"]*\)".*/\1/p' "$reg" | head -1)"
+        if [[ -n "$p" && -d "$(dirname "$p")" ]]; then SOURCEMODS="$p"; fi
+        break
+    fi
+done
+DEST="$SOURCEMODS/$MOD"
+mkdir -p "$SOURCEMODS"
+if [[ ! -w "$SOURCEMODS" ]]; then
+    echo "error: can't write to $SOURCEMODS (Steam lists mods from there)"; exit 1
+fi
 
 # Keep the player's own stuff (custom/, cfg/config.cfg) on reinstall.
 if [[ -d "$DEST" ]]; then
@@ -42,7 +54,12 @@ mkdir -p "$DEST"
 # mapped, and overwriting them in place can crash it.
 cp -r --remove-destination "$HERE/$MOD/." "$DEST/"
 
-if ! ls "$STEAM_DIR"/steamapps/appmanifest_243750.acf >/dev/null 2>&1; then
+# Source SDK Base 2013 Multiplayer can be in any Steam library.
+SDKBASE=""
+while IFS= read -r lib; do
+    if [[ -f "$lib/steamapps/appmanifest_243750.acf" ]]; then SDKBASE="$lib"; break; fi
+done < <(echo "$STEAM_DIR"; sed -n 's/.*"path"[[:space:]]*"\([^"]*\)".*/\1/p' "$STEAM_DIR/steamapps/libraryfolders.vdf" 2>/dev/null)
+if [[ -z "$SDKBASE" ]]; then
     echo "!! 'Source SDK Base 2013 Multiplayer' doesn't look installed in this library."
     echo "   Install it: steam://install/243750"
 fi

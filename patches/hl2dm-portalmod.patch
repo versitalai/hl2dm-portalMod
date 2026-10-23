@@ -93,7 +93,7 @@ index 4283c3b..7d1d6be 100644
  						if ( pTracerName )
  						{
 diff --git a/src/game/client/viewrender.cpp b/src/game/client/viewrender.cpp
-index b4011e2..a5072db 100644
+index b4011e2..26ce7b3 100644
 --- a/src/game/client/viewrender.cpp
 +++ b/src/game/client/viewrender.cpp
 @@ -75,6 +75,10 @@
@@ -122,7 +122,35 @@ index b4011e2..a5072db 100644
  		g_bRenderingView = true;
  
  		// Must be first 
-@@ -3237,6 +3249,220 @@ bool CViewRender::DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_Poin
+@@ -2485,6 +2497,12 @@ void CViewRender::Render2DEffectsPostHUD( const CViewSetup &viewRender )
+ //-----------------------------------------------------------------------------
+ // Determines what kind of water we're going to use
+ //-----------------------------------------------------------------------------
++#ifdef HL2MP
++// Below the top portal quality, water seen through a portal is drawn cheap: no
++// reflection/refraction views of its own inside the portal's view.
++static bool s_bHL2MPPortalCheapWater = true;
++#endif
++
+ void CViewRender::DetermineWaterRenderInfo( const VisibleFogVolumeInfo_t &fogVolumeInfo, WaterRenderInfo_t &info )
+ {
+ 	tmZone( TELEMETRY_LEVEL0, TMZF_NONE, "%s", __FUNCTION__ );
+@@ -2519,6 +2537,14 @@ void CViewRender::DetermineWaterRenderInfo( const VisibleFogVolumeInfo_t &fogVol
+ #endif
+ 	bool bForceReflectEntities = r_waterforcereflectentities.GetBool();
+ 
++#ifdef HL2MP
++	if ( g_bRenderingHL2MPPortalView && s_bHL2MPPortalCheapWater )
++	{
++		info.m_bCheapWater = true;
++		return;
++	}
++#endif
++
+ #ifdef PORTAL
+ 	switch( g_pPortalRender->ShouldForceCheaperWaterLevel() )
+ 	{
+@@ -3237,6 +3263,379 @@ bool CViewRender::DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_Poin
  	return true;
  }
  
@@ -131,12 +159,102 @@ index b4011e2..a5072db 100644
 +ConVar cl_portal_draw_local_player( "cl_portal_draw_local_player", "1", FCVAR_ARCHIVE, "Draw your own player model in portal views." );
 +ConVar cl_portal_max_views( "cl_portal_max_views", "2", FCVAR_ARCHIVE, "Max portals rendered see-through per frame (closest first).", true, 0, true, HL2MP_PORTAL_MAX_PRIMARY_VIEWS );
 +ConVar cl_portal_recursion( "cl_portal_recursion", "1", FCVAR_ARCHIVE, "Also render live views of portals seen through a portal (more expensive)." );
++ConVar cl_portal_quality( "cl_portal_quality", "4", FCVAR_ARCHIVE,
++	"Portal view quality: 0 off (solid portals, fastest), 1 low, 2 medium, 3 high, 4 auto (lowers/raises quality to hold cl_portal_auto_fps).", true, 0, true, 4 );
++ConVar cl_portal_auto_fps( "cl_portal_auto_fps", "60", FCVAR_ARCHIVE, "Frame rate that cl_portal_quality 4 (auto) tries to hold.", true, 20, true, 300 );
++ConVar cl_portal_resolution( "cl_portal_resolution", "1", FCVAR_ARCHIVE,
++	"Max resolution of portal views, as a fraction of the screen's (0.25-1). Lower is faster and blurrier.", true, 0.25f, true, 1.0f );
++ConVar cl_portal_scissor( "cl_portal_scissor", "1", FCVAR_ARCHIVE, "Only render the part of a portal view the portal covers on screen." );
++ConVar cl_portal_quality_debug( "cl_portal_quality_debug", "0", FCVAR_NONE, "Print portal quality changes made by cl_portal_quality 4 (auto)." );
++
++// What a quality level renders. Cheapest first; the presets are entries of
++// this ladder and auto moves along it one step at a time.
++struct HL2MPPortalQuality_t
++{
++	int		nViews;			// portals rendered see-through per frame
++	bool	bRecursion;		// live views of portals seen through a portal
++	float	flResolution;	// portal view size / screen size
++	float	flMinScreen;	// portals smaller than this (fraction of the screen) draw solid
++	const char *pszName;
++};
++static const HL2MPPortalQuality_t s_HL2MPPortalQuality[] =
++{
++	{ 0, false, 0.0f,	0.0f,	"off" },
++	{ 1, false, 0.35f,	0.20f,	"lowest" },
++	{ 1, false, 0.5f,	0.12f,	"low" },
++	{ 2, false, 0.75f,	0.06f,	"medium" },
++	{ 2, false, 1.0f,	0.03f,	"high (no recursion)" },
++	{ 2, true,	1.0f,	0.0f,	"high" },
++};
++static const int s_iHL2MPPortalPresetLevel[] = { 0, 2, 3, 5 };	// cl_portal_quality 0-3
++static const int HL2MP_PORTAL_QUALITY_TOP = ARRAYSIZE( s_HL2MPPortalQuality ) - 1;
++
++// Auto quality: frame time (smoothed) against the target, with hysteresis so
++// it doesn't flip back and forth between two levels.
++static int s_iPortalAutoLevel = 3;
++static float s_flPortalAvgFrameTime = 0.0f;
++static float s_flPortalNextAdjust = 0.0f;
++static float s_flPortalLastRaise = -100.0f;
++static float s_flPortalRaiseBlockedUntil = 0.0f;
++static bool s_bPortalViewsRendered = false;	// last frame rendered any portal view
++
++static int HL2MPPortal_GetQualityLevel()
++{
++	int iQuality = cl_portal_quality.GetInt();
++	if ( iQuality < 4 )
++		return s_iHL2MPPortalPresetLevel[ clamp( iQuality, 0, 3 ) ];
++
++	// Ignore loading hitches.
++	float flFrameTime = MIN( gpGlobals->absoluteframetime, 0.25f );
++	s_flPortalAvgFrameTime = ( s_flPortalAvgFrameTime > 0.0f ) ? Lerp( 0.05f, s_flPortalAvgFrameTime, flFrameTime ) : flFrameTime;
++
++	float flNow = gpGlobals->realtime;
++	if ( flNow < s_flPortalNextAdjust )
++		return s_iPortalAutoLevel;
++
++	float flTarget = 1.0f / cl_portal_auto_fps.GetFloat();
++	int iOldLevel = s_iPortalAutoLevel;
++
++	// Too slow while portal views are being drawn: they're the likely cost.
++	if ( s_bPortalViewsRendered && s_flPortalAvgFrameTime > flTarget * 1.1f && s_iPortalAutoLevel > 0 )
++	{
++		s_iPortalAutoLevel--;
++		s_flPortalNextAdjust = flNow + 0.5f;	// let the average catch up first
++		// Raised and it got slow again right away: stay down for a while.
++		if ( flNow - s_flPortalLastRaise < 3.0f )
++			s_flPortalRaiseBlockedUntil = flNow + 30.0f;
++	}
++	// Clear headroom: try one step up (at "off" nothing is drawn, so just look at the frame rate).
++	else if ( s_flPortalAvgFrameTime < flTarget * 0.8f && s_iPortalAutoLevel < HL2MP_PORTAL_QUALITY_TOP &&
++		( s_bPortalViewsRendered || s_iPortalAutoLevel == 0 ) && flNow >= s_flPortalRaiseBlockedUntil )
++	{
++		s_iPortalAutoLevel++;
++		s_flPortalLastRaise = flNow;
++		s_flPortalNextAdjust = flNow + 2.0f;
++	}
++
++	if ( cl_portal_quality_debug.GetBool() && iOldLevel != s_iPortalAutoLevel )
++	{
++		Msg( "portal quality: %s -> %s (%.0f fps, target %.0f)\n", s_HL2MPPortalQuality[iOldLevel].pszName,
++			s_HL2MPPortalQuality[s_iPortalAutoLevel].pszName, 1.0f / MAX( s_flPortalAvgFrameTime, 0.001f ), cl_portal_auto_fps.GetFloat() );
++	}
++	return s_iPortalAutoLevel;
++}
++
++// Screen bounds of a portal in normalized device coordinates (-1..1).
++struct HL2MPPortalScreenRect_t
++{
++	float flMinX, flMinY, flMaxX, flMaxY;
++};
 +
 +// Is any part of the portal inside the view frustum?
-+static bool HL2MPPortal_IsOnScreen( C_HL2MPPortal *pPortal, const VMatrix &matWorldToProjection, const Vector &vViewOrigin )
++static bool HL2MPPortal_IsOnScreen( C_HL2MPPortal *pPortal, const VMatrix &matWorldToProjection, const Vector &vViewOrigin, HL2MPPortalScreenRect_t *pRect )
 +{
 +	Vector vForward, vRight, vUp;
 +	pPortal->GetPortalVectors( &vForward, &vRight, &vUp );
++
++	HL2MPPortalScreenRect_t full = { -1.0f, -1.0f, 1.0f, 1.0f };
++	*pRect = full;
 +
 +	// Close enough to touch: always visible (corners may be behind the camera).
 +	if ( ( vViewOrigin - pPortal->GetAbsOrigin() ).LengthSqr() < 96.0f * 96.0f )
@@ -163,16 +281,30 @@ index b4011e2..a5072db 100644
 +		flMinY = MIN( flMinY, flY ); flMaxY = MAX( flMaxY, flY );
 +	}
 +
++	pRect->flMinX = MAX( flMinX, -1.0f ); pRect->flMaxX = MIN( flMaxX, 1.0f );
++	pRect->flMinY = MAX( flMinY, -1.0f ); pRect->flMaxY = MIN( flMaxY, 1.0f );
 +	return flMaxX >= -1.0f && flMinX <= 1.0f && flMaxY >= -1.0f && flMinY <= 1.0f;
++}
++
++// Pixel rect (left, top, right, bottom) of a screen rect in a view, padded for
++// bilinear filtering at the edges.
++static void HL2MPPortal_RectToPixels( const HL2MPPortalScreenRect_t &rect, const CViewSetup &view, int *pPixels )
++{
++	pPixels[0] = clamp( (int)( ( 0.5f + 0.5f * rect.flMinX ) * view.width ) - 2, 0, view.width );
++	pPixels[1] = clamp( (int)( ( 0.5f - 0.5f * rect.flMaxY ) * view.height ) - 2, 0, view.height );
++	pPixels[2] = clamp( (int)( ( 0.5f + 0.5f * rect.flMaxX ) * view.width ) + 3, 0, view.width );
++	pPixels[3] = clamp( (int)( ( 0.5f - 0.5f * rect.flMinY ) * view.height ) + 3, 0, view.height );
 +}
 +
 +// Open, front-facing portals visible in a view, closest first. If pClipPortal
 +// is set (the exit portal the view looks out of), portals behind its plane
 +// and the clip portal itself are left out.
-+static void HL2MPPortal_FindVisible( const CViewSetup &view, const VMatrix &matWorldToProjection, C_HL2MPPortal *pClipPortal, int nMax, CUtlVector<C_HL2MPPortal *> &visible )
++static void HL2MPPortal_FindVisible( const CViewSetup &view, const VMatrix &matWorldToProjection, C_HL2MPPortal *pClipPortal, int nMax, float flMinScreen,
++	CUtlVector<C_HL2MPPortal *> &visible, CUtlVector<HL2MPPortalScreenRect_t> &rects )
 +{
 +	CUtlVector<float> distances;
 +	visible.RemoveAll();
++	rects.RemoveAll();
 +
 +	for ( int i = 0; i < C_HL2MPPortal::GetPortalCount(); i++ )
 +	{
@@ -187,7 +319,12 @@ index b4011e2..a5072db 100644
 +		if ( DotProduct( vToView, pPortal->GetSurfaceNormal() ) <= 0.0f )
 +			continue;
 +
-+		if ( !HL2MPPortal_IsOnScreen( pPortal, matWorldToProjection, view.origin ) )
++		HL2MPPortalScreenRect_t rect;
++		if ( !HL2MPPortal_IsOnScreen( pPortal, matWorldToProjection, view.origin, &rect ) )
++			continue;
++
++		// Too small on screen to be worth a whole extra view: draw it solid.
++		if ( MAX( rect.flMaxX - rect.flMinX, rect.flMaxY - rect.flMinY ) * 0.5f < flMinScreen )
 +			continue;
 +
 +		float flDist = vToView.LengthSqr();
@@ -195,12 +332,14 @@ index b4011e2..a5072db 100644
 +		while ( iInsert < distances.Count() && distances[iInsert] < flDist )
 +			iInsert++;
 +		visible.InsertBefore( iInsert, pPortal );
++		rects.InsertBefore( iInsert, rect );
 +		distances.InsertBefore( iInsert, flDist );
 +	}
 +
 +	while ( visible.Count() > nMax )
 +	{
 +		visible.RemoveMultipleFromTail( 1 );
++		rects.RemoveMultipleFromTail( 1 );
 +	}
 +}
 +
@@ -238,7 +377,7 @@ index b4011e2..a5072db 100644
 +	return pRenderTarget;
 +}
 +
-+void CViewRender::RenderHL2MPPortalView( C_HL2MPPortal *pPortal, const CViewSetup &parentView, ITexture *pRenderTarget, int iDepth )
++void CViewRender::RenderHL2MPPortalView( C_HL2MPPortal *pPortal, const CViewSetup &parentView, ITexture *pRenderTarget, int iDepth, const HL2MPPortalScreenRect_t &rect )
 +{
 +	C_HL2MPPortal *pLinked = pPortal->GetLinkedPortal();
 +	CViewSetup portalView = HL2MPPortal_VirtualView( pPortal, parentView );
@@ -255,13 +394,21 @@ index b4011e2..a5072db 100644
 +	Frustum frustum;
 +	render->Push3DView( portalView, VIEW_CLEAR_DEPTH | VIEW_CLEAR_COLOR, pRenderTarget, (VPlane *)frustum );
 +
-+	// Only draw what's in front of the exit portal.
++	// Only draw what's in front of the exit portal, and only the pixels the
++	// portal covers in the parent view (the rest of the target is never sampled).
 +	Vector4D vClipPlane;
 +	vClipPlane.AsVector3D() = vExitNormal;
 +	vClipPlane.w = DotProduct( vExitNormal, pLinked->GetAbsOrigin() ) + 0.5f;
++	bool bScissor = cl_portal_scissor.GetBool();
 +	{
 +		CMatRenderContextPtr pRenderContext( materials );
 +		pRenderContext->PushCustomClipPlane( vClipPlane.Base() );
++		if ( bScissor )
++		{
++			int pixels[4];
++			HL2MPPortal_RectToPixels( rect, portalView, pixels );
++			pRenderContext->SetScissorRect( pixels[0], pixels[1], pixels[2], pixels[3], true );
++		}
 +	}
 +
 +	ViewDrawScene( false, SKYBOX_2DSKYBOX_VISIBLE, portalView, 0, VIEW_MONITOR, false, 0, &customVis );
@@ -276,6 +423,10 @@ index b4011e2..a5072db 100644
 +
 +	{
 +		CMatRenderContextPtr pRenderContext( materials );
++		if ( bScissor )
++		{
++			pRenderContext->SetScissorRect( 0, 0, 0, 0, false );
++		}
 +		pRenderContext->PopCustomClipPlane();
 +	}
 +	render->PopView( frustum );
@@ -286,16 +437,49 @@ index b4011e2..a5072db 100644
 +
 +void CViewRender::DrawHL2MPPortalViews( const CViewSetup &mainView )
 +{
-+	if ( !cl_portal_render_views.GetBool() || C_HL2MPPortal::GetPortalCount() == 0 )
-+		return;
++	bool bRendered = false;
++	if ( cl_portal_render_views.GetBool() && C_HL2MPPortal::GetPortalCount() > 0 )
++	{
++		int iLevel = HL2MPPortal_GetQualityLevel();
++		const HL2MPPortalQuality_t &quality = s_HL2MPPortalQuality[iLevel];
++		s_bHL2MPPortalCheapWater = ( iLevel < HL2MP_PORTAL_QUALITY_TOP );
++		int nViews = MIN( MIN( quality.nViews, cl_portal_max_views.GetInt() ), HL2MP_PORTAL_MAX_PRIMARY_VIEWS );
++		if ( nViews > 0 )
++		{
++			bRendered = DrawHL2MPPortalViewsAtQuality( mainView, nViews, quality.bRecursion && cl_portal_recursion.GetBool(),
++				MIN( quality.flResolution, cl_portal_resolution.GetFloat() ), quality.flMinScreen );
++		}
++	}
++	else
++	{
++		// Keep auto's frame time average current while nothing is drawn.
++		HL2MPPortal_GetQualityLevel();
++	}
++	s_bPortalViewsRendered = bRendered;
++}
 +
++bool CViewRender::DrawHL2MPPortalViewsAtQuality( const CViewSetup &mainView, int nViews, bool bRecursion, float flResolution, float flMinScreen )
++{
 +	VMatrix matWorldToView, matViewToProjection, matWorldToPixels;
 +	render->GetMatricesForView( mainView, &matWorldToView, &matViewToProjection, &g_matHL2MPPortalWorldToProjection[0], &matWorldToPixels );
 +	g_iHL2MPPortalViewStamp[0]++;
 +
-+	CUtlVector<C_HL2MPPortal *> primary;
-+	HL2MPPortal_FindVisible( mainView, g_matHL2MPPortalWorldToProjection[0], NULL, MIN( cl_portal_max_views.GetInt(), HL2MP_PORTAL_MAX_PRIMARY_VIEWS ), primary );
++	// Portal views are rendered at a fraction of the screen's size (into the top
++	// left of their target) with the same projection, so screen positions and
++	// the portal's screen-space texture mapping stay the same, just scaled.
++	flResolution = clamp( flResolution, 0.25f, 1.0f );
++	CViewSetup scaledView = mainView;
++	scaledView.x = 0;
++	scaledView.y = 0;
++	scaledView.width = MAX( 16, (int)( mainView.width * flResolution ) );
++	scaledView.height = MAX( 16, (int)( mainView.height * flResolution ) );
++	scaledView.m_flAspectRatio = ( mainView.m_flAspectRatio > 0.0f ) ? mainView.m_flAspectRatio : (float)mainView.width / (float)mainView.height;
 +
++	CUtlVector<C_HL2MPPortal *> primary;
++	CUtlVector<HL2MPPortalScreenRect_t> primaryRects;
++	HL2MPPortal_FindVisible( mainView, g_matHL2MPPortalWorldToProjection[0], NULL, nViews, flMinScreen, primary, primaryRects );
++
++	int nRendered = 0;
 +	for ( int iPrimary = 0; iPrimary < primary.Count(); iPrimary++ )
 +	{
 +		ITexture *pRenderTarget = HL2MPPortal_GetRenderTarget( iPrimary );
@@ -303,22 +487,23 @@ index b4011e2..a5072db 100644
 +			break;
 +
 +		// The portal samples the target in its parent view's screen space; all
-+		// views share the main view's size.
-+		g_flHL2MPPortalUScale = (float)mainView.width / pRenderTarget->GetActualWidth();
-+		g_flHL2MPPortalVScale = (float)mainView.height / pRenderTarget->GetActualHeight();
++		// views share the scaled size.
++		g_flHL2MPPortalUScale = (float)scaledView.width / pRenderTarget->GetActualWidth();
++		g_flHL2MPPortalVScale = (float)scaledView.height / pRenderTarget->GetActualHeight();
 +
 +		C_HL2MPPortal *pPortal = primary[iPrimary];
 +
 +		// Portals visible inside this portal's view get their own views first,
 +		// so they show live too instead of a flat color.
-+		if ( cl_portal_recursion.GetBool() )
++		if ( bRecursion )
 +		{
-+			CViewSetup portalView = HL2MPPortal_VirtualView( pPortal, mainView );
++			CViewSetup portalView = HL2MPPortal_VirtualView( pPortal, scaledView );
 +			render->GetMatricesForView( portalView, &matWorldToView, &matViewToProjection, &g_matHL2MPPortalWorldToProjection[1], &matWorldToPixels );
 +			g_iHL2MPPortalViewStamp[1]++;
 +
 +			CUtlVector<C_HL2MPPortal *> nested;
-+			HL2MPPortal_FindVisible( portalView, g_matHL2MPPortalWorldToProjection[1], pPortal->GetLinkedPortal(), HL2MP_PORTAL_MAX_NESTED_VIEWS, nested );
++			CUtlVector<HL2MPPortalScreenRect_t> nestedRects;
++			HL2MPPortal_FindVisible( portalView, g_matHL2MPPortalWorldToProjection[1], pPortal->GetLinkedPortal(), HL2MP_PORTAL_MAX_NESTED_VIEWS, flMinScreen, nested, nestedRects );
 +
 +			for ( int iNested = 0; iNested < nested.Count(); iNested++ )
 +			{
@@ -327,16 +512,18 @@ index b4011e2..a5072db 100644
 +				if ( !pNestedTarget )
 +					break;
 +
-+				RenderHL2MPPortalView( nested[iNested], portalView, pNestedTarget, 2 );
++				RenderHL2MPPortalView( nested[iNested], portalView, pNestedTarget, 2, nestedRects[iNested] );
 +				nested[iNested]->m_iViewSlot[1] = iSlot;
 +				nested[iNested]->m_iViewStamp[1] = g_iHL2MPPortalViewStamp[1];
 +			}
 +		}
 +
-+		RenderHL2MPPortalView( pPortal, mainView, pRenderTarget, 1 );
++		RenderHL2MPPortalView( pPortal, scaledView, pRenderTarget, 1, primaryRects[iPrimary] );
 +		pPortal->m_iViewSlot[0] = iPrimary;
 +		pPortal->m_iViewStamp[0] = g_iHL2MPPortalViewStamp[0];
++		nRendered++;
 +	}
++	return nRendered > 0;
 +}
 +#endif // HL2MP
 +
@@ -344,26 +531,30 @@ index b4011e2..a5072db 100644
  {
  #ifdef PORTAL
 diff --git a/src/game/client/viewrender.h b/src/game/client/viewrender.h
-index 052e3a7..6294b92 100644
+index 052e3a7..40e9f1d 100644
 --- a/src/game/client/viewrender.h
 +++ b/src/game/client/viewrender.h
-@@ -24,6 +24,7 @@ class ConVar;
+@@ -24,6 +24,8 @@ class ConVar;
  class CClientRenderablesList;
  class IClientVehicle;
  class C_PointCamera;
 +class C_HL2MPPortal;
++struct HL2MPPortalScreenRect_t;
  class C_EnvProjectedTexture;
  class IScreenSpaceEffect;
  class CClientViewSetup;
-@@ -433,6 +434,13 @@ private:
+@@ -433,6 +435,16 @@ private:
  
  	void			DrawMonitors( const CViewSetup &cameraView );
  
 +#ifdef HL2MP
-+	// Render what's on the far side of visible portals into their render targets.
++	// Render what's on the far side of visible portals into their render targets,
++	// at the quality set by cl_portal_quality.
 +	void			DrawHL2MPPortalViews( const CViewSetup &mainView );
-+	// Render pPortal's view as seen from parentView into pRenderTarget (at render depth iDepth).
-+	void			RenderHL2MPPortalView( C_HL2MPPortal *pPortal, const CViewSetup &parentView, ITexture *pRenderTarget, int iDepth );
++	bool			DrawHL2MPPortalViewsAtQuality( const CViewSetup &mainView, int nViews, bool bRecursion, float flResolution, float flMinScreen );
++	// Render pPortal's view as seen from parentView into pRenderTarget (at render
++	// depth iDepth), only where the portal covers parentView (rect).
++	void			RenderHL2MPPortalView( C_HL2MPPortal *pPortal, const CViewSetup &parentView, ITexture *pRenderTarget, int iDepth, const HL2MPPortalScreenRect_t &rect );
 +#endif
 +
  	bool			DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_PointCamera *pCameraEnt, const CViewSetup &cameraView, C_BasePlayer *localPlayer, 
