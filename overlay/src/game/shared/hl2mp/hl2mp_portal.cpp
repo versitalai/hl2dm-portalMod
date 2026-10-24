@@ -704,6 +704,39 @@ CHL2MPPortal *UTIL_HL2MPPortal_FindPlayerTransition( const Vector &vecOrigin, co
 	return NULL;
 }
 
+CHL2MPPortal *UTIL_HL2MPPortal_FindBlockedEntry( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocityBefore, const Vector &vecVelocityAfter )
+{
+	Vector vecCenter = vecOrigin + ( vecMins + vecMaxs ) * 0.5f;
+	Vector vecHalf = ( vecMaxs - vecMins ) * 0.5f;
+
+	for ( int iPortal = 0; iPortal < s_HL2MPPortals.Count(); iPortal++ )
+	{
+		CHL2MPPortal *pPortal = s_HL2MPPortals[iPortal];
+		if ( !pPortal->CanCarve() )
+			continue;
+#ifdef CLIENT_DLL
+		if ( pPortal->IsDormant() || pPortal->GetLinkedPortal()->IsDormant() )
+			continue;
+#endif
+
+		int k;
+		float flSign, flDist;
+		pPortal->GetPlaneAxis( &k, &flSign, &flDist );
+
+		// Partly through the hole...
+		if ( PortalHullGap( vecCenter, vecHalf, k, flSign, flDist ) > -1.0f || !pPortal->HullFitsHole( vecCenter, vecHalf ) )
+			continue;
+
+		// ...was going in fast, and this move took most of that away.
+		float flBefore = -flSign * vecVelocityBefore[k];
+		float flAfter = -flSign * vecVelocityAfter[k];
+		if ( flBefore > 300.0f && flAfter < flBefore * 0.25f )
+			return pPortal;
+	}
+
+	return NULL;
+}
+
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut,
 	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath, ITraceFilter *pFilterAfterPortal )

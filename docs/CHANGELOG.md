@@ -7,10 +7,14 @@ From the v0.4.2 play-test. Each fix except the settings window and the camera ea
 ### Fixed
 - **Portal Settings text overlapped at high resolutions.** The window inherits proportional (resolution-scaled) fonts
   from the main menu, but its layout was in fixed pixels; positions and sizes now scale with the fonts.
-- **Falling fast into a floor portal sometimes stopped you dead.** Coming out of a wall portal whose bottom is at floor
-  level, the mapped eye put the feet ~8 units below the hole (in the floor); pushing straight out of the wall couldn't
-  fix that, the player was stuck and Source zeroed the velocity. The exit now lines the hull up with the exit hole
-  first, then pushes out, then finishes the tick's move.
+- **Falling fast into a floor portal sometimes stopped you dead.** Two causes, both with a wall portal as the exit:
+  - Feet first into the floor portal, the part of you already through sticks out of the wall up to a body length
+    before your eye crosses. Anything within that distance in front of the exit (a pillar, a railing) stopped you
+    inside the hole, and you sank through with no speed. Now, stopped like that while going in fast, you go through
+    at once with the speed you came in with, and meet the obstacle on the other side.
+  - Coming out, the mapped eye put the feet below the hole (in the floor), or the floor in front of the wall was a
+    little higher than the hole's bottom edge. The exit now lines the hull up strictly inside the hole, pushes out,
+    steps up (up to a stair step) if needed, and finishes the tick's move. The camera never ends up behind the exit.
 - **Stuck at a floor portal's edge / snapped in when standing there.** The funnel pulled anyone standing with their
   center over the hole toward its middle at 150-600 u/s, faster than walking away. Standing players are now funneled
   only when well over the hole (ellipse x0.8), not while walking away from it, and slowly (80 u/s). Dropping onto

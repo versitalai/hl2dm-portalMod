@@ -84,8 +84,12 @@ movement, so the client predicts it. `CHL2GameMovement` (HL2MP) routes `TracePla
 - The transition maps the position at the moment the eye was on the plane (interpolated along the tick's move), then
   finishes the rest of the move on the exit side with a hull trace. The eye stays continuous, so floor<->wall portals
   don't jump the camera, and loops between floor portals don't gain height. Only if that spot is blocked is the hull
-  first lined up with the exit hole (`GetHoleFitShift`: floor -> wall portal puts the feet below the hole's bottom
-  edge), then stepped out of the exit 2 units at a time, then the rest of the move traced. Gravity for the part of the
+  first lined up with the exit hole (`GetHoleFitShift`, strictly inside: floor -> wall portal puts the feet below the
+  hole's bottom edge), then stepped out of the exit 2 units at a time and up to a stair step, then the rest of the move
+  traced. The eye is moved in front of the exit plane if it ended behind it.
+- A fast entry (>300 u/s into the plane) stopped inside the hole (`UTIL_HL2MPPortal_FindBlockedEntry`: the part through
+  the hole hit something in front of the exit before the eye crossed) goes through right away with its pre-move
+  velocity; it meets the obstacle on the exit side. Gravity for the part of the
   tick after the crossing is redone in the exit frame, and height gained pushing out of a floor exit is taken out of
   the exit speed, so floor loops keep their energy.
 - Client: the view turn's dropped part (roll, pitch past vertical) is stored as a rotation and eased out over

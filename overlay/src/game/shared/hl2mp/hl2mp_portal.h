@@ -199,6 +199,12 @@ Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector 
 // vecEye (with the hull inside its hole), or NULL.
 CHL2MPPortal *UTIL_HL2MPPortal_FindPlayerTransition( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecEyeStart, const Vector &vecEye );
 
+// The portal a hull partly through it was heading into fast and got stopped
+// in (the part through the hole hit something in front of the exit), or NULL.
+// Going feet first into a floor portal that comes out of a wall, the feet
+// stick out of the wall well before the eye crosses.
+CHL2MPPortal *UTIL_HL2MPPortal_FindBlockedEntry( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocityBefore, const Vector &vecVelocityAfter );
+
 // Release version from the mod folder's version.txt ("dev" without one).
 const char *UTIL_HL2MPPortal_GetModVersion();
 #ifdef GAME_DLL

@@ -1044,7 +1044,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..7046873 100644
+index e54f63d..8464341 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -1062,7 +1062,7 @@ index e54f63d..7046873 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +537,260 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +537,293 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1125,6 +1125,7 @@ index e54f63d..7046873 100644
 +
 +	Vector vecOriginStart = mv->GetAbsOrigin();
 +	Vector vecEyeStart = vecOriginStart + player->GetViewOffset();
++	Vector vecVelocityStart = mv->m_vecVelocity;
 +
 +	BaseClass::PlayerMove();
 +
@@ -1133,8 +1134,22 @@ index e54f63d..7046873 100644
 +
 +	Vector vecEye = mv->GetAbsOrigin() + player->GetViewOffset();
 +	CHL2MPPortal *pPortal = UTIL_HL2MPPortal_FindPlayerTransition( mv->GetAbsOrigin(), GetPlayerMins(), GetPlayerMaxs(), vecEyeStart, vecEye );
++
++	// Going in fast and stopped dead inside the hole: the part already through
++	// hit something in front of the exit before the eye got to the plane
++	// (feet first into a floor portal that comes out of a wall, the feet stick
++	// out of the wall up to a body length ahead). Go through now, at the speed
++	// it came in with, and meet that obstacle on the other side instead of
++	// hanging in the hole.
++	bool bForced = false;
 +	if ( !pPortal )
-+		return;
++	{
++		pPortal = UTIL_HL2MPPortal_FindBlockedEntry( mv->GetAbsOrigin(), GetPlayerMins(), GetPlayerMaxs(), vecVelocityStart, mv->m_vecVelocity );
++		if ( !pPortal )
++			return;
++		bForced = true;
++		mv->m_vecVelocity = vecVelocityStart;
++	}
 +
 +	CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
 +	VMatrix matToLinked = pPortal->MatrixThisToLinked();
@@ -1209,14 +1224,20 @@ index e54f63d..7046873 100644
 +		float flDepth = DotProduct( vecExitNormal, vecOrigin + vecMid - pLinked->GetAbsOrigin() );
 +		float flFullOut = flExtent + 1.0f - flDepth;
 +
++		// Out of the exit, and up a step if need be (the floor in front of a
++		// wall portal can be a little higher than the hole's bottom edge).
 +		Vector vecOut = vecOrigin + vecExitNormal * MAX( flFullOut, 0.0f );
-+		for ( float flOut = 0.0f; flOut < flFullOut; flOut += 2.0f )
++		bool bFound = false;
++		for ( float flOut = 0.0f; flOut < flFullOut + 2.0f && !bFound; flOut += 2.0f )
 +		{
-+			Vector vecTry = vecOrigin + vecExitNormal * flOut;
-+			if ( TestPlayerPosition( vecTry, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
++			for ( float flUp = 0.0f; flUp <= player->m_Local.m_flStepSize && !bFound; flUp += 2.0f )
 +			{
-+				vecOut = vecTry;
-+				break;
++				Vector vecTry = vecOrigin + vecExitNormal * MIN( flOut, MAX( flFullOut, 0.0f ) ) + Vector( 0.0f, 0.0f, flUp );
++				if ( TestPlayerPosition( vecTry, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
++				{
++					vecOut = vecTry;
++					bFound = true;
++				}
 +			}
 +		}
 +		vecOrigin = vecOut;
@@ -1232,6 +1253,18 @@ index e54f63d..7046873 100644
 +			{
 +				vecOrigin = tr.endpos;
 +			}
++		}
++	}
++
++	// Never leave the camera behind the exit (a forced crossing maps an eye
++	// that hadn't reached the plane yet): move out until it's in front.
++	float flEyeBehind = -DotProduct( vecOrigin + vecViewOffset - pLinked->GetAbsOrigin(), vecExitNormal );
++	if ( flEyeBehind > 0.0f )
++	{
++		Vector vecTry = vecOrigin + vecExitNormal * ( flEyeBehind + 1.0f );
++		if ( TestPlayerPosition( vecTry, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
++		{
++			vecOrigin = vecTry;
 +		}
 +	}
 +
@@ -1266,9 +1299,9 @@ index e54f63d..7046873 100644
 +#ifdef GAME_DLL
 +	if ( sv_portal_debug_moves.GetBool() )
 +	{
-+		Msg( "PORTALTEST move t=%.3f eye %.1f -> %.1f cross %.2f z %.1f -> %.1f (wanted %.1f) vz %.0f -> %.0f, exit %s at (%.1f %.1f %.1f) vel (%.0f %.0f %.0f)\n",
++		Msg( "PORTALTEST move t=%.3f eye %.1f -> %.1f cross %.2f z %.1f -> %.1f (wanted %.1f) vz %.0f -> %.0f, exit %s%s at (%.1f %.1f %.1f) vel (%.0f %.0f %.0f)\n",
 +			gpGlobals->curtime, flEyeStart, flEyeEnd, flCross, mv->GetAbsOrigin().z, vecOrigin.z, vecWanted.z,
-+			mv->m_vecVelocity.z, vecVelocity.z, pszExit, vecOrigin.x, vecOrigin.y, vecOrigin.z, vecVelocity.x, vecVelocity.y, vecVelocity.z );
++			mv->m_vecVelocity.z, vecVelocity.z, bForced ? "forced, " : "", pszExit, vecOrigin.x, vecOrigin.y, vecOrigin.z, vecVelocity.x, vecVelocity.y, vecVelocity.z );
 +	}
 +#endif
 +
