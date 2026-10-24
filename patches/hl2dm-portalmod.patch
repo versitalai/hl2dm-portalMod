@@ -41,18 +41,94 @@ index 7fcf892..c516410 100644
  				$File	"$SRCDIR\game\shared\hl2mp\weapon_rpg.h"
  				$File	"$SRCDIR\game\shared\hl2mp\weapon_shotgun.cpp"
 diff --git a/src/game/client/hl2mp/c_hl2mp_player.cpp b/src/game/client/hl2mp/c_hl2mp_player.cpp
-index 367a616..2f9d84f 100644
+index 367a616..9aa6a86 100644
 --- a/src/game/client/hl2mp/c_hl2mp_player.cpp
 +++ b/src/game/client/hl2mp/c_hl2mp_player.cpp
-@@ -104,6 +104,7 @@ C_HL2MP_Player::C_HL2MP_Player() : m_PlayerAnimState( this ), m_iv_angEyeAngles(
+@@ -10,6 +10,9 @@
+ #include "view.h"
+ #include "takedamageinfo.h"
+ #include "hl2mp_gamerules.h"
++#ifdef HL2MP
++#include "hl2mp_portal.h"
++#endif
+ #include "in_buttons.h"
+ #include "iviewrender_beams.h"			// flashlight beam
+ #include "r_efx.h"
+@@ -79,6 +82,9 @@ ConVar hl2_sprintspeed( "hl2_sprintspeed", "320", FCVAR_REPLICATED );
+ 
+ static ConVar cl_playermodel( "cl_playermodel", "none", FCVAR_USERINFO | FCVAR_ARCHIVE | FCVAR_SERVER_CAN_EXECUTE, "Default Player Model");
+ static ConVar cl_defaultweapon( "cl_defaultweapon", "weapon_physcannon", FCVAR_USERINFO | FCVAR_ARCHIVE, "Default Spawn Weapon");
++#ifdef HL2MP
++static ConVar cl_portal_view_ease( "cl_portal_view_ease", "0.2", FCVAR_ARCHIVE, "Seconds the camera takes to settle after a portal turns your view (0 = instant)." );
++#endif
+ 
+ void SpawnBlood (Vector vecSpot, const Vector &vecDir, int bloodColor, float flDamage);
+ 
+@@ -104,6 +110,9 @@ C_HL2MP_Player::C_HL2MP_Player() : m_PlayerAnimState( this ), m_iv_angEyeAngles(
  {
  	m_iIDEntIndex = 0;
  	m_iSpawnInterpCounterCache = 0;
 +	m_bPortalResetInterpolation = false;
++	m_qPortalViewEase.Init( 0.0f, 0.0f, 0.0f, 1.0f );
++	m_flPortalViewEaseStart = -1.0f;
  
  	m_angEyeAngles.Init();
  
-@@ -1223,6 +1224,12 @@ void C_HL2MP_Player::PostThink( void )
+@@ -721,6 +730,12 @@ void C_HL2MP_Player::OnDataChanged( DataUpdateType_t type )
+ 	if ( type == DATA_UPDATE_CREATED )
+ 	{
+ 		SetNextClientThink( CLIENT_THINK_ALWAYS );
++#ifdef HL2MP
++		if ( IsLocalPlayer() )
++		{
++			UTIL_HL2MPPortal_CheckServerVersion();
++		}
++#endif
+ 	}
+ 
+ 	UpdateVisibility();
+@@ -968,7 +983,40 @@ void C_HL2MP_Player::CalcView( Vector &eyeOrigin, QAngle &eyeAngles, float &zNea
+ 	}
+ 
+ 	BaseClass::CalcView( eyeOrigin, eyeAngles, zNear, zFar, fov );
++
++#ifdef HL2MP
++	// Settle the camera after a portal turned it.
++	if ( m_flPortalViewEaseStart >= 0.0f )
++	{
++		float flEase = cl_portal_view_ease.GetFloat();
++		float flT = ( flEase > 0.0f ) ? ( gpGlobals->realtime - m_flPortalViewEaseStart ) / flEase : 1.0f;
++		if ( flT >= 1.0f || flT < 0.0f )
++		{
++			m_flPortalViewEaseStart = -1.0f;
++		}
++		else
++		{
++			Quaternion qIdentity( 0.0f, 0.0f, 0.0f, 1.0f ), qNow;
++			QuaternionSlerp( m_qPortalViewEase, qIdentity, SimpleSpline( flT ), qNow );
++			matrix3x4_t matView, matEase, matResult;
++			AngleMatrix( eyeAngles, matView );
++			QuaternionMatrix( qNow, matEase );
++			ConcatTransforms( matView, matEase, matResult );
++			MatrixAngles( matResult, eyeAngles );
++		}
++	}
++#endif
++}
++
++#ifdef HL2MP
++void C_HL2MP_Player::StartPortalViewEase( const Quaternion &qDelta )
++{
++	if ( cl_portal_view_ease.GetFloat() <= 0.0f )
++		return;
++	m_qPortalViewEase = qDelta;
++	m_flPortalViewEaseStart = gpGlobals->realtime;
+ }
++#endif
+ 
+ IRagdoll* C_HL2MP_Player::GetRepresentativeRagdoll() const
+ {
+@@ -1223,6 +1271,12 @@ void C_HL2MP_Player::PostThink( void )
  	// Store the eye angles pitch so the client can compute its animation state correctly.
  	m_angEyeAngles = EyeAngles();
  
@@ -66,10 +142,10 @@ index 367a616..2f9d84f 100644
  	{
  		SetCollisionBounds( VEC_CROUCH_TRACE_MIN, VEC_CROUCH_TRACE_MAX );
 diff --git a/src/game/client/hl2mp/c_hl2mp_player.h b/src/game/client/hl2mp/c_hl2mp_player.h
-index bac7584..e7ff132 100644
+index bac7584..acde02d 100644
 --- a/src/game/client/hl2mp/c_hl2mp_player.h
 +++ b/src/game/client/hl2mp/c_hl2mp_player.h
-@@ -120,6 +120,11 @@ public:
+@@ -120,6 +120,18 @@ public:
  
  	virtual void PostThink( void );
  
@@ -77,6 +153,13 @@ index bac7584..e7ff132 100644
 +	// PostThink then resets position interpolation so the camera doesn't blend
 +	// from one side of the portal to the other.
 +	bool m_bPortalResetInterpolation;
++
++	// Also set on a portal crossing: the camera turn the new view angles
++	// dropped (roll, pitch past straight up/down), eased out in CalcView
++	// instead of snapping. Local rotation applied on top of the view.
++	void StartPortalViewEase( const Quaternion &qDelta );
++	Quaternion m_qPortalViewEase;
++	float m_flPortalViewEaseStart;
 +
  private:
  	
@@ -961,7 +1044,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..9bf1232 100644
+index e54f63d..cd12a44 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -979,7 +1062,7 @@ index e54f63d..9bf1232 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +537,221 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +537,253 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1108,12 +1191,23 @@ index e54f63d..9bf1232 100644
 +	{
 +		Vector vecMid = ( GetPlayerMins() + GetPlayerMaxs() ) * 0.5f;
 +		Vector vecHalf = ( GetPlayerMaxs() - GetPlayerMins() ) * 0.5f;
++
++		// First line the hull up with the exit hole: from a floor portal into a
++		// wall one the eye lands on the plane with the feet below the hole's
++		// bottom edge (in the floor), which no push straight out can fix; that
++		// left the player stuck and stopped dead.
++		Vector vecShift;
++		if ( pLinked->GetHoleFitShift( vecOrigin + vecMid, vecHalf, &vecShift ) && vecShift.LengthSqr() > 0.0001f )
++		{
++			vecOrigin += vecShift;
++		}
++
 +		float flExtent = fabs( vecExitNormal.x ) * vecHalf.x + fabs( vecExitNormal.y ) * vecHalf.y + fabs( vecExitNormal.z ) * vecHalf.z;
 +		float flDepth = DotProduct( vecExitNormal, vecOrigin + vecMid - pLinked->GetAbsOrigin() );
 +		float flFullOut = flExtent + 1.0f - flDepth;
 +
 +		Vector vecOut = vecOrigin + vecExitNormal * MAX( flFullOut, 0.0f );
-+		for ( float flOut = 2.0f; flOut < flFullOut; flOut += 2.0f )
++		for ( float flOut = 0.0f; flOut < flFullOut; flOut += 2.0f )
 +		{
 +			Vector vecTry = vecOrigin + vecExitNormal * flOut;
 +			if ( TestPlayerPosition( vecTry, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
@@ -1123,14 +1217,22 @@ index e54f63d..9bf1232 100644
 +			}
 +		}
 +		vecOrigin = vecOut;
++
++		if ( vecRestOfMove.LengthSqr() > 0.0001f && TestPlayerPosition( vecOrigin, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
++		{
++			TracePlayerBBox( vecOrigin, vecOrigin + vecRestOfMove, PlayerSolidMask(), COLLISION_GROUP_PLAYER_MOVEMENT, tr );
++			if ( !tr.startsolid )
++			{
++				vecOrigin = tr.endpos;
++			}
++		}
 +	}
 +
-+	// Being pushed up out of the exit must not add energy: take the height
-+	// it gained out of the outward speed, or two floor portals launch you a
-+	// little higher every loop.
++	// Being pushed up out of a floor exit must not add energy: take the height
++	// it gained out of the outward speed.
 +	float flRise = vecOrigin.z - vecWanted.z;
 +	float flOutSpeed = DotProduct( vecVelocity, vecExitNormal );
-+	if ( flRise > 0.0f && flOutSpeed > 0.0f )
++	if ( vecExitNormal.z > 0.7f && flRise > 0.0f && flOutSpeed > 0.0f )
 +	{
 +		float flNewOut = sqrtf( MAX( flOutSpeed * flOutSpeed - 2.0f * GetCurrentGravity() * flRise, 0.0f ) );
 +		vecVelocity += vecExitNormal * ( flNewOut - flOutSpeed );
@@ -1146,6 +1248,7 @@ index e54f63d..9bf1232 100644
 +	}
 +
 +	// View turns with the portal; roll dropped.
++	QAngle angViewBefore = mv->m_vecViewAngles;
 +	Vector vecForward;
 +	AngleVectors( mv->m_vecViewAngles, &vecForward );
 +	QAngle angView;
@@ -1174,6 +1277,18 @@ index e54f63d..9bf1232 100644
 +	if ( prediction->IsFirstTimePredicted() && player->IsLocalPlayer() )
 +	{
 +		engine->SetViewAngles( angView );
++
++		// The camera's full turn through the portal vs. the angles it gets
++		// (no roll, pitch clamped): ease the difference out instead of snapping.
++		matrix3x4_t matBefore, matMapped, matAfter, matAfterInv, matDelta;
++		AngleMatrix( angViewBefore, matBefore );
++		ConcatTransforms( matToLinked.As3x4(), matBefore, matMapped );
++		AngleMatrix( angView, matAfter );
++		MatrixInvert( matAfter, matAfterInv );
++		ConcatTransforms( matAfterInv, matMapped, matDelta );
++		Quaternion qDelta;
++		MatrixQuaternion( matDelta, qDelta );
++		static_cast<C_HL2MP_Player *>( player )->StartPortalViewEase( qDelta );
 +
 +		// Don't blend the camera across the portal: drop any leftover
 +		// prediction-error smoothing (an offset in the old side's frame), and
@@ -1221,6 +1336,58 @@ index fe50736..b667e34 100644
  private:
  
  	// See if we are pressing use near a ladder "mount" point and if so, latch us onto the ladder
+diff --git a/src/game/shared/hl2mp/hl2mp_gamerules.cpp b/src/game/shared/hl2mp/hl2mp_gamerules.cpp
+index 87a3cf6..6b52d8c 100644
+--- a/src/game/shared/hl2mp/hl2mp_gamerules.cpp
++++ b/src/game/shared/hl2mp/hl2mp_gamerules.cpp
+@@ -33,6 +33,9 @@
+ 	#include "voice_gamemgr.h"
+ 	#include "hl2mp_gameinterface.h"
+ 	#include "hl2mp_cvars.h"
++#ifdef HL2MP
++	#include "hl2mp_portal.h"
++#endif
+ 
+ extern void respawn(CBaseEntity *pEdict, bool fCopyCorpse);
+ 
+@@ -193,6 +196,9 @@ CHL2MPRules::CHL2MPRules()
+ 	}
+ 
+ 	m_bTeamPlayEnabled = teamplay.GetBool();
++#ifdef HL2MP
++	UTIL_HL2MPPortal_PublishModVersion();
++#endif
+ 	m_flIntermissionEndTime = 0.0f;
+ 	m_flGameStartTime = 0;
+ 
+@@ -1286,4 +1292,12 @@ const char *CHL2MPRules::GetChatFormat( bool bTeamOnly, CBasePlayer *pPlayer )
+ 	return pszFormat;
+ }
+ 
++#ifdef HL2MP
++void CHL2MPRules::RadiusDamage( const CTakeDamageInfo &info, const Vector &vecSrc, float flRadius, int iClassIgnore, CBaseEntity *pEntityIgnore )
++{
++	BaseClass::RadiusDamage( info, vecSrc, flRadius, iClassIgnore, pEntityIgnore );
++	UTIL_HL2MPPortal_RadiusDamage( info, vecSrc, flRadius, iClassIgnore, pEntityIgnore );
++}
++#endif
++
+ #endif
+diff --git a/src/game/shared/hl2mp/hl2mp_gamerules.h b/src/game/shared/hl2mp/hl2mp_gamerules.h
+index 78da217..5a42b6e 100644
+--- a/src/game/shared/hl2mp/hl2mp_gamerules.h
++++ b/src/game/shared/hl2mp/hl2mp_gamerules.h
+@@ -135,6 +135,10 @@ public:
+ 	void	ManageObjectRelocation( void );
+ 	void    CheckChatForReadySignal( CHL2MP_Player *pPlayer, const char *chatmsg );
+ 	const char *GetChatFormat( bool bTeamOnly, CBasePlayer *pPlayer );
++#ifdef HL2MP
++	// Explosions also reach through portals near them.
++	virtual void RadiusDamage( const CTakeDamageInfo &info, const Vector &vecSrc, float flRadius, int iClassIgnore, CBaseEntity *pEntityIgnore );
++#endif
+ 
+ #endif
+ 
 diff --git a/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp b/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp
 index 336cfcb..49d398e 100644
 --- a/src/game/shared/hl2mp/weapon_hl2mpbasebasebludgeon.cpp
@@ -1281,7 +1448,7 @@ index 336cfcb..49d398e 100644
  		float bludgeonHullRadius = 1.732f * BLUDGEON_HULL_DIM;  // hull is +/- 16, so use cuberoot of 2 to determine how big the hull is from center to the corner point
  
 diff --git a/src/game/shared/hl2mp/weapon_physcannon.cpp b/src/game/shared/hl2mp/weapon_physcannon.cpp
-index 26fdfef..542ea2c 100644
+index 26fdfef..17fbe8f 100644
 --- a/src/game/shared/hl2mp/weapon_physcannon.cpp
 +++ b/src/game/shared/hl2mp/weapon_physcannon.cpp
 @@ -278,6 +278,7 @@ CGrabController::CGrabController( void )
@@ -1455,7 +1622,7 @@ index 26fdfef..542ea2c 100644
  
  	if ( tr.fraction < 0.5 )
  	{
-@@ -1977,7 +2078,12 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+@@ -1977,7 +2078,25 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
  	AngleMatrix( angles, attachedToWorld );
  	VectorRotate( m_attachedPositionObjectSpace, attachedToWorld, offset );
  
@@ -1465,11 +1632,24 @@ index 26fdfef..542ea2c 100644
 +	if ( !TransformThroughPortals( &target, &angles, NULL ) )
 +		return false;
 +
++	// Held through a portal and pulled back toward the holder's side (the
++	// target is behind the portal it came out of): steer it into the hole.
++	// Straight at the target it hit the wall beside the hole unless the
++	// holder aimed right at the portal, and never came back.
++	if ( m_nPortals > 0 && m_hPortals[m_nPortals - 1] )
++	{
++		CHL2MPPortal *pExit = m_hPortals[m_nPortals - 1]->GetLinkedPortal();
++		if ( pExit )
++		{
++			target = pExit->ClampBehindPointToHole( target, 0.6f );
++		}
++	}
++
 +	SetTargetPosition( target, angles );
  
  	return true;
  }
-@@ -1999,6 +2105,8 @@ void CWeaponPhysCannon::UpdateObject( void )
+@@ -1999,6 +2118,8 @@ void CWeaponPhysCannon::UpdateObject( void )
  //-----------------------------------------------------------------------------
  void CWeaponPhysCannon::DetachObject( bool playSound, bool wasLaunched )
  {
@@ -1478,7 +1658,7 @@ index 26fdfef..542ea2c 100644
  #ifndef CLIENT_DLL
  	// misyl: Disable pred filtering in this server-only section.
  	CDisablePredictionFiltering disablePred;
-@@ -2061,7 +2169,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
+@@ -2061,7 +2182,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
  {
  	CBaseEntity *pAttachedObject = m_hAttachedObject.Get();
  
@@ -1489,7 +1669,7 @@ index 26fdfef..542ea2c 100644
  	{
  		// NOTE :This must happen after OnPhysGunPickup because that can change the mass
  		if ( pAttachedObject != GetGrabController().GetAttached() )
-@@ -3342,3 +3452,93 @@ void CallbackPhyscannonImpact( const CEffectData &data )
+@@ -3342,3 +3465,93 @@ void CallbackPhyscannonImpact( const CEffectData &data )
  DECLARE_CLIENT_EFFECT( "PhyscannonImpact", CallbackPhyscannonImpact );
  
  #endif

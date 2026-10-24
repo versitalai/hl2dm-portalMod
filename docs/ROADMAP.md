@@ -20,6 +20,10 @@
 - **Props pop through** (the whole prop at once), they don't slide through: VPhysics keeps the wall around the hole
   solid. Smooth crossing needs Portal-style physics carving (a physics copy of the geometry around each portal). Held
   props no longer flip back and forth.
+- **Linux installs don't self-update** (`update.bat` is Windows only); rerun `install.sh` from a new release.
+- **Explosion effects** (fireball, sound) stay on the blast's side; the damage and its push go through.
+- **Blocked-exit check uses one hull test** centered on the exit hole: a hole blocked only off-center still lets you in,
+  then the exit push-out deals with it.
 - **Soundscapes restart** when you go through into another area of the map (e.g. dm_lockdown's announcer), like
   walking between areas, just instant. A short delay before the soundscape switches would hide it.
 

@@ -62,7 +62,6 @@ public:
 		SetSizeable( false );
 		SetMoveable( true );
 		SetDeleteSelfOnClose( false );
-		SetSize( 620, 520 );
 
 		int y = 36;
 		m_pQuality = AddCombo( "Portal quality", s_QualityChoices, ARRAYSIZE( s_QualityChoices ), y );
@@ -75,23 +74,34 @@ public:
 		AddHelp( "Portal views are drawn at this share of your screen resolution, then stretched to fit. Lower = blurrier portals, more fps on a weak graphics card. A limit on top of the quality above.", y, 48 );
 
 		m_pDrawSelf = new CheckButton( this, "DrawSelf", "See yourself in portals" );
-		m_pDrawSelf->SetBounds( 20, y, 400, 24 ); y += 24;
+		Place( m_pDrawSelf, 20, y, 400, 24 ); y += 24;
 		AddHelp( "Draws your own player model in portal views (small cost).", y, 20 );
 
 		m_pDebug = new CheckButton( this, "Debug", "Show Auto's changes in the console" );
-		m_pDebug->SetBounds( 20, y, 400, 24 ); y += 24;
+		Place( m_pDebug, 20, y, 400, 24 ); y += 24;
 		AddHelp( "Prints a line every time Auto changes the quality, with your frame rate.", y, 20 );
 
 		Button *pPotato = new Button( this, "Potato", "Low graphics for the whole game", this, "potato" );
-		pPotato->SetBounds( 20, y + 4, 280, 26 ); y += 34;
+		Place( pPotato, 20, y + 4, 280, 26 ); y += 34;
 		AddHelp( "Runs cfg/potato.cfg: lowest textures, models, shadows, water and effects, and Auto portals at 45 fps. Saved; undo in Options > Video.", y, 34 );
 
 		Button *pOK = new Button( this, "OK", "OK", this, "ok" );
 		Button *pCancel = new Button( this, "Cancel", "Cancel", this, "Close" );
 		Button *pApply = new Button( this, "Apply", "Apply", this, "apply" );
-		pOK->SetBounds( 620 - 3 * 90 - 20, 520 - 40, 80, 26 );
-		pCancel->SetBounds( 620 - 2 * 90 - 20, 520 - 40, 80, 26 );
-		pApply->SetBounds( 620 - 90 - 20, 520 - 40, 80, 26 );
+		Place( pOK, WINDOW_WIDE - 3 * 90 - 20, WINDOW_TALL - 40, 80, 26 );
+		Place( pCancel, WINDOW_WIDE - 2 * 90 - 20, WINDOW_TALL - 40, 80, 26 );
+		Place( pApply, WINDOW_WIDE - 90 - 20, WINDOW_TALL - 40, 80, 26 );
+	}
+
+	virtual void PerformLayout()
+	{
+		BaseClass::PerformLayout();
+
+		FOR_EACH_VEC( m_Layout, i )
+		{
+			const PanelLayout_t &layout = m_Layout[i];
+			layout.pPanel->SetBounds( Scale( layout.x ), Scale( layout.y ), Scale( layout.wide ), Scale( layout.tall ) );
+		}
 	}
 
 	void Open()
@@ -103,6 +113,7 @@ public:
 		m_pDebug->SetSelected( ConVarRef( "cl_portal_quality_debug" ).GetBool() );
 		UpdateQualityHelp();
 
+		SetSize( Scale( WINDOW_WIDE ), Scale( WINDOW_TALL ) );
 		MoveToCenterOfScreen();
 		Activate();
 	}
@@ -133,6 +144,31 @@ public:
 	}
 
 private:
+	// Laid out in pixels at 1024x768. The window inherits proportional mode
+	// from the main menu, where fonts grow with the screen height, so every
+	// position and size has to grow with them.
+	enum { WINDOW_WIDE = 620, WINDOW_TALL = 520 };
+
+	struct PanelLayout_t
+	{
+		Panel	*pPanel;
+		int		x, y, wide, tall;
+	};
+
+	void Place( Panel *pPanel, int x, int y, int wide, int tall )
+	{
+		PanelLayout_t layout = { pPanel, x, y, wide, tall };
+		m_Layout.AddToTail( layout );
+	}
+
+	int Scale( int nValue )
+	{
+		if ( !IsProportional() )
+			return nValue;
+		// Proportional values are for a 480-tall screen.
+		return scheme()->GetProportionalScaledValueEx( GetScheme(), nValue * 480 / 768 );
+	}
+
 	MESSAGE_FUNC_PTR( OnTextChanged, "TextChanged", panel )
 	{
 		if ( panel == m_pQuality )
@@ -144,10 +180,10 @@ private:
 	ComboBox *AddCombo( const char *pszTitle, const PortalSettingChoice_t *pChoices, int nChoices, int &y )
 	{
 		Label *pLabel = new Label( this, NULL, pszTitle );
-		pLabel->SetBounds( 20, y, 250, 24 );
+		Place( pLabel, 20, y, 250, 24 );
 
 		ComboBox *pCombo = new ComboBox( this, NULL, nChoices, false );
-		pCombo->SetBounds( 280, y, 300, 24 );
+		Place( pCombo, 280, y, 300, 24 );
 		for ( int i = 0; i < nChoices; i++ )
 		{
 			KeyValues *pData = new KeyValues( "data", "value", pChoices[i].pszValue );
@@ -161,7 +197,7 @@ private:
 	Label *AddHelp( const char *pszText, int &y, int nHeight )
 	{
 		Label *pHelp = new Label( this, NULL, pszText );
-		pHelp->SetBounds( 36, y, 560, nHeight );
+		Place( pHelp, 36, y, 560, nHeight );
 		pHelp->SetWrap( true );
 		pHelp->SetContentAlignment( Label::a_northwest );
 		y += nHeight + 8;
@@ -213,6 +249,7 @@ private:
 	ComboBox	*m_pResolution;
 	CheckButton	*m_pDrawSelf;
 	CheckButton	*m_pDebug;
+	CUtlVector<PanelLayout_t> m_Layout;
 };
 
 static DHANDLE<CHL2MPPortalSettings> s_hPortalSettings;

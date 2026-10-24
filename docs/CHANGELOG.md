@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.4.3 — unreleased
+
+From the v0.4.2 play-test. Each fix except the settings window and the camera ease has a matching self-test check.
+
+### Fixed
+- **Portal Settings text overlapped at high resolutions.** The window inherits proportional (resolution-scaled) fonts
+  from the main menu, but its layout was in fixed pixels; positions and sizes now scale with the fonts.
+- **Falling fast into a floor portal sometimes stopped you dead.** Coming out of a wall portal whose bottom is at floor
+  level, the mapped eye put the feet ~8 units below the hole (in the floor); pushing straight out of the wall couldn't
+  fix that, the player was stuck and Source zeroed the velocity. The exit now lines the hull up with the exit hole
+  first, then pushes out, then finishes the tick's move.
+- **Stuck at a floor portal's edge / snapped in when standing there.** The funnel pulled anyone standing with their
+  center over the hole toward its middle at 150-600 u/s, faster than walking away. Standing players are now funneled
+  only when well over the hole (ellipse x0.8), not while walking away from it, and slowly (80 u/s).
+- **Walking into a portal whose exit is blocked froze you (even mid-air).** Each portal checks for room in front of
+  the other one (world, players and fixed props; loose props never block). With no room it's a plain wall/floor.
+- **Hard to bring a held object back through.** Pulled back toward you, the object was dragged at a point behind the
+  far portal, i.e. at the wall next to the hole unless you aimed right at the portal. It's now steered into the hole.
+
+### Added
+- **Explosions go through portals.** A blast that can see a portal goes off again just out of the linked one, with
+  the radius and damage left after the distance to the hole (same falloff over the whole path).
+- **Camera eases after a portal turns it** (roll dropped, pitch past vertical) instead of snapping:
+  `cl_portal_view_ease` (seconds, default 0.2, 0 = off). View only; aim and movement are exact.
+- **Self-updating installs (Windows).** The desktop shortcuts run `update.bat quiet` first: one request to GitHub,
+  and only if a newer release is out it downloads it and runs its installer (no admin). `update.bat` checks by hand;
+  `no_auto_update.txt` turns the automatic check off. Releases carry `version.txt`.
+- Servers publish their release in `sv_portal_mod_version`; joining with a different release shows a chat warning.
+- Self-test: held prop comes back, walking off a floor portal's edge, 1200 u/s falls (3 offsets), blocked exit acts
+  solid, explosion through a portal. CI tests `update.bat` updating an old install to the latest release.
+
 ## 0.4.2 — 2026-10-24
 
 From the v0.4.1 play-test. Each fix has a matching check in the dedicated-server self-test.

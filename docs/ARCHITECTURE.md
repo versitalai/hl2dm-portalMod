@@ -75,10 +75,20 @@ movement, so the client predicts it. `CHL2GameMovement` (HL2MP) routes `TracePla
   (called at the start of `PlayerMove`) slides a player heading into the hole a little off-center into line: center
   over the portal (ellipse x1.1), moving toward the plane (or standing on a floor portal), within 0.25 s of it; moved
   sideways at up to 600 u/s by a hull trace. Centered outside that, the rim is solid (stand on a floor portal's edge).
+  Standing on a floor portal (not moving into it) is funneled only when well over the hole (ellipse x0.8), not while
+  walking away from it, at 80 u/s: faster pulls trapped players on the edge.
+- No room in front of the linked portal (`HasRoomForHull`: a hull test just out of it against the world, players and
+  fixed props; loose physics props never count) and not yet through the plane: the carving is off, the portal is a
+  plain wall or floor. Cached per tick per portal.
 - The transition maps the position at the moment the eye was on the plane (interpolated along the tick's move), then
   finishes the rest of the move on the exit side with a hull trace. The eye stays continuous, so floor<->wall portals
   don't jump the camera, and loops between floor portals don't gain height. Only if that spot is blocked is the hull
-  stepped out of the exit, 2 units at a time.
+  first lined up with the exit hole (`GetHoleFitShift`: floor -> wall portal puts the feet below the hole's bottom
+  edge), then stepped out of the exit 2 units at a time, then the rest of the move traced. Gravity for the part of the
+  tick after the crossing is redone in the exit frame, and height gained pushing out of a floor exit is taken out of
+  the exit speed, so floor loops keep their energy.
+- Client: the view turn's dropped part (roll, pitch past vertical) is stored as a rotation and eased out over
+  `cl_portal_view_ease` in `C_HL2MP_Player::CalcView` (camera only).
 - Client: on the first prediction of a transition the prediction-error smoothing offset is cleared and
   `C_HL2MP_Player::PostThink` resets position interpolation, so the camera never blends across the portal.
 - Only portals on sloped surfaces (normal not along a world axis) still teleport players on the server.
@@ -90,7 +100,9 @@ is computed in the holder's space as usual and mapped through the stack (`Transf
 trace for the hold distance uses the portal trace, so it reaches through a portal instead of stopping at the wall.
 `TeleportEntity` calls `PhysCannon_HeldObjectWentThroughPortal` (push / pop at the object end) and
 `PhysCannon_HolderWentThroughPortal` (pop / push at the holder end; also called from the seamless walk). Punts and
-throws are aimed through the stack. The gravity gun networks `m_nHeldPortalCount`; the client stops predicting the
+throws are aimed through the stack. When the mapped target is behind the far portal (the holder pulls it back), it's
+moved along that portal's plane into the hole (`ClampBehindPointToHole`, ellipse x0.6), so it comes back through
+instead of being pressed against the wall beside the hole. The gravity gun networks `m_nHeldPortalCount`; the client stops predicting the
 held object while it's non-zero. Only a chain deeper than 4 portals drops the object.
 
 ## Self-test (dedicated server)
@@ -104,6 +116,22 @@ held object while it's non-zero. Only a chain deeper than 4 portals drops the ob
   opened under it, held-flag props don't crash, a trace and a rocket go through, and the bot walks into the wall
   portal carrying a box (`+use`), steered to its center: it must come out of the floor portal without a snap, still
   holding the box.
+
+## Explosions (server)
+
+`CHL2MPRules::RadiusDamage` runs the normal blast, then `UTIL_HL2MPPortal_RadiusDamage`: for each open portal whose
+hole is within the radius, in front of it and in sight (brush trace), the blast goes off again 2 units out of the
+linked portal with radius `R - d` and damage `D * (R - d) / R` (`d` = distance to the nearest point of the hole), so
+falloff over the whole path is the same. One hop (it calls the base `CGameRules::RadiusDamage`).
+
+## Versions and updates
+
+`scripts/package.sh` writes the release tag to `hl2dm_portal/version.txt`. The server reads it into the replicated
+`sv_portal_mod_version`; the client compares it with its own when the local player is created and warns in chat on a
+mismatch (release tags only). `packaging/update.bat` (in the mod folder) asks the GitHub API for the latest release,
+downloads and runs that release's `install.bat` with the current sourcemods folder; the desktop launchers call it in
+quiet mode. It runs from a copy in `%TEMP%` and the launchers do their work on one line, because the install rewrites
+both files while they run.
 
 ## Bullets (shared)
 
