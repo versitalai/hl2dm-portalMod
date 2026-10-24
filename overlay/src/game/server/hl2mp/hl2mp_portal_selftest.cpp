@@ -663,6 +663,7 @@ private:
 			// away from the portal: the box, held through it, has to come back.
 			m_nBoxTeleportsBefore = m_hHeldBox ? CHL2MPPortal::CountTeleports( m_hHeldBox ) : 0;
 			m_angBot.y += 75.0f;
+			ToBasePlayer( m_hBot )->SnapEyeAngles( m_angBot );	// a bot's usercmd angles don't override a snap
 			m_flHeldLogUntil = gpGlobals->curtime + 3.0f;
 			Wait( 3.0f );
 			return;
@@ -757,7 +758,7 @@ private:
 			m_hFloor->GetPortalVectors( NULL, &vecRight, NULL );
 			QAngle angOut;
 			VectorAngles( vecRight, angOut );
-			PlaceBot( m_hFloor->GetAbsOrigin() + vecRight * 20.0f + Vector( 0, 0, 1 ), angOut, vec3_origin );
+			PlaceBot( m_hFloor->GetAbsOrigin() + vecRight * 20.0f + Vector( 0, 0, 0.1f ), angOut, vec3_origin );	// on the floor, not dropping onto it
 			m_flBotForward = 200.0f;
 			Wait( 1.5f );
 			return;
@@ -852,8 +853,17 @@ private:
 			pCrate->Activate();
 			m_hCrate = pCrate;
 			m_iCrateHealth = pCrate->GetHealth();
+			Wait( 0.5f );	// a new entity isn't in the spatial partition (blast queries) right away
+			return;
+		}
+
+		case 19:
+		{
 			Vector vecBlast = m_hWall->GetAbsOrigin() + m_vecWallNormal * 40.0f;
-			Msg( "PORTALTEST info blast %.0f from the crate directly\n", ( vecBlast - pCrate->WorldSpaceCenter() ).Length() );
+			if ( m_hCrate )
+			{
+				Msg( "PORTALTEST info blast %.0f from the crate directly\n", ( vecBlast - m_hCrate->WorldSpaceCenter() ).Length() );
+			}
 			ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
 			ExplosionCreate( vecBlast, vec3_angle, NULL, 100, 150, true );
 			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
@@ -861,7 +871,7 @@ private:
 			return;
 		}
 
-		case 19:
+		case 20:
 		{
 			int iHealth = m_hCrate ? m_hCrate->GetHealth() : -1;
 			Result( "explosion_through_portal", !m_hCrate || iHealth < m_iCrateHealth, "crate_health %d -> %d", m_iCrateHealth, iHealth );
@@ -905,7 +915,7 @@ private:
 			return;
 		}
 
-		case 20:
+		case 21:
 		{
 			m_flLoopStart = -1.0f;
 			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );

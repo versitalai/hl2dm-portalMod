@@ -1044,7 +1044,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..e4d23ce 100644
+index e54f63d..a4f9dc1 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -1197,7 +1197,7 @@ index e54f63d..e4d23ce 100644
 +		// bottom edge (in the floor), which no push straight out can fix; that
 +		// left the player stuck and stopped dead.
 +		Vector vecShift;
-+		if ( pLinked->GetHoleFitShift( vecOrigin + vecMid, vecHalf, &vecShift ) && vecShift.LengthSqr() > 0.0001f )
++		if ( pLinked->GetHoleFitShift( vecOrigin + vecMid, vecHalf, &vecShift, -0.1f ) && vecShift.LengthSqr() > 0.0001f )
 +		{
 +			vecOrigin += vecShift;
 +		}

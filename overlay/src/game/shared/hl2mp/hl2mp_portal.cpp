@@ -389,21 +389,20 @@ static float BoxSupport( const Vector &vHalf, const Vector &vDir )
 	return fabs( vDir.x ) * vHalf.x + fabs( vDir.y ) * vHalf.y + fabs( vDir.z ) * vHalf.z;
 }
 
-bool CHL2MPPortal::GetHoleFitShift( const Vector &vecCenter, const Vector &vecHalf, Vector *pShift ) const
+bool CHL2MPPortal::GetHoleFitShift( const Vector &vecCenter, const Vector &vecHalf, Vector *pShift, float flSlack ) const
 {
 	int k;
 	float flSign, flDist;
 	if ( !GetPlaneAxis( &k, &flSign, &flDist ) )
 		return false;
 
-	// Room for the center (same rectangle as the collision carving, a little
-	// inside its 1 unit of slack).
+	// Room for the center in the portal's bounding rectangle.
 	Vector vecRight, vecUp;
 	GetPortalVectors( NULL, &vecRight, &vecUp );
 	Vector vecPlanarHalf = vecHalf;
 	vecPlanarHalf[k] = 0.0f;
-	float flRoomRight = HL2MP_PORTAL_HALF_WIDTH + 0.75f - BoxSupport( vecPlanarHalf, vecRight );
-	float flRoomUp = HL2MP_PORTAL_HALF_HEIGHT + 0.75f - BoxSupport( vecPlanarHalf, vecUp );
+	float flRoomRight = HL2MP_PORTAL_HALF_WIDTH + flSlack - BoxSupport( vecPlanarHalf, vecRight );
+	float flRoomUp = HL2MP_PORTAL_HALF_HEIGHT + flSlack - BoxSupport( vecPlanarHalf, vecUp );
 	if ( flRoomRight < 0.0f || flRoomUp < 0.0f )
 		return false;
 
@@ -497,7 +496,7 @@ Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector 
 			continue;
 
 		Vector vecShift;
-		if ( !pPortal->GetHoleFitShift( vecOnPlane, vecHalf, &vecShift ) )
+		if ( !pPortal->GetHoleFitShift( vecOnPlane, vecHalf, &vecShift, 0.75f ) )
 			continue;	// never fits
 		float flShift = vecShift.Length();
 		if ( flShift < 0.01f )

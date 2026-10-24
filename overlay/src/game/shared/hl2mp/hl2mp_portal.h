@@ -78,8 +78,11 @@ public:
 	// Does a hull (world center, half size) fit through the hole for movement?
 	bool			HullFitsHole( const Vector &vecCenter, const Vector &vecHalf ) const;
 	// Shift along the portal plane that puts a hull's footprint inside the hole
-	// (zero when it already fits). False if the hull never fits.
-	bool			GetHoleFitShift( const Vector &vecCenter, const Vector &vecHalf, Vector *pShift ) const;
+	// (zero when it already fits). False if the hull never fits. flSlack grows
+	// the hole: 0.75 matches the collision carving (1 unit) for going in;
+	// coming out needs the hull strictly inside, or a floor-level wall portal
+	// leaves the feet in the floor.
+	bool			GetHoleFitShift( const Vector &vecCenter, const Vector &vecHalf, Vector *pShift, float flSlack ) const;
 	// Is there room for this hull just out of this portal? A blocked exit makes
 	// the linked portal solid for movement instead of trapping the player.
 	bool			HasRoomForHull( const Vector &vecMins, const Vector &vecMaxs, IHandleEntity *pIgnore ) const;
