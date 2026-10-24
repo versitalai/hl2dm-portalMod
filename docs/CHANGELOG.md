@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.2 — unreleased
+## 0.4.2 — 2026-10-24
 
 From the v0.4.1 play-test. Each fix has a matching check in the dedicated-server self-test.
 
