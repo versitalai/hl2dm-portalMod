@@ -9,8 +9,9 @@ From the v0.4.1 play-test. Each fix has a matching check in the dedicated-server
   portal's edge, and losing speed going through fast: the server no longer snap-teleports players at wall/floor/ceiling
   portals (it fought client prediction). Coming in a little off-center now slides you into line (funneling).
 - Going higher and higher between two floor portals: the transition maps the moment the eye crossed the plane and
-  finishes the move on the exit side; when the hull still has to be pushed up out of the exit, the height it gains is
-  taken out of the exit speed (energy is kept, not added).
+  finishes the move on the exit side. The gravity of the rest of that tick is redone in the exit frame (it had sped
+  the fall up where it should slow the climb: one tick of speed gained per loop), and height from being pushed out
+  of the exit comes out of the exit speed.
 - Camera jump between floor and wall portals (the eye is carried through, not the hull center), and camera blending
   across the portal (prediction smoothing and interpolation reset on the way through).
 - Held props snapping back and forth between the portals: they go through only when the hold point is past the plane.

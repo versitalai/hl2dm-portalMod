@@ -961,7 +961,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..e4ccb14 100644
+index e54f63d..9bf1232 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -979,7 +979,7 @@ index e54f63d..e4ccb14 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +537,209 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +537,221 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1075,6 +1075,18 @@ index e54f63d..e4ccb14 100644
 +	Vector vecRestOfMove = matToLinked.VMul3x3( mv->GetAbsOrigin() - vecCross );
 +
 +	Vector vecVelocity = matToLinked.VMul3x3( mv->m_vecVelocity );
++
++	// The part of the tick after the crossing ran with gravity on the entry
++	// side; on the exit side it pulls the other way (between floor portals it
++	// sped the fall up where it should slow the climb). Redo that gravity in
++	// the exit frame, or every loop gains one tick of speed.
++	if ( player->GetGroundEntity() == NULL && player->GetWaterLevel() < WL_Waist )
++	{
++		float flGravity = ( player->GetGravity() ? player->GetGravity() : 1.0f ) * GetCurrentGravity();
++		Vector vecGravityAfter( 0.0f, 0.0f, -flGravity * ( 1.0f - flCross ) * gpGlobals->frametime );
++		vecVelocity += vecGravityAfter - matToLinked.VMul3x3( vecGravityAfter );
++	}
++
 +	Vector vecExitNormal = pLinked->GetSurfaceNormal();
 +	Vector vecWanted = vecOrigin + vecRestOfMove;
 +

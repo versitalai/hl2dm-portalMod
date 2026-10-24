@@ -106,6 +106,7 @@ saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
 | `sv_portal_lookahead` | 3 | server | Ticks of lookahead for fast movers |
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |
 | `sv_portal_debug` | 0 | server (cheat) | Draw detection volumes, placement traces, exit boxes |
+| `sv_portal_debug_moves` | 0 | server | Log each player portal transition (eye depth, height and speed before/after) |
 
 ## Dedicated server
 
