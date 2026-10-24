@@ -961,7 +961,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..d5a43b2 100644
+index e54f63d..5d3b749 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,13 @@
@@ -978,7 +978,7 @@ index e54f63d..d5a43b2 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +536,160 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +536,183 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1035,7 +1035,8 @@ index e54f63d..d5a43b2 100644
 +		}
 +	}
 +
-+	Vector vecEyeStart = mv->GetAbsOrigin() + player->GetViewOffset();
++	Vector vecOriginStart = mv->GetAbsOrigin();
++	Vector vecEyeStart = vecOriginStart + player->GetViewOffset();
 +
 +	BaseClass::PlayerMove();
 +
@@ -1052,10 +1053,21 @@ index e54f63d..d5a43b2 100644
 +
 +	// The hull never rotates. Carry the eye through and rebuild the origin from
 +	// it, so the camera is continuous even between a floor and a wall portal
-+	// (carrying the hull's center would jump the camera there), and no height
-+	// is gained or lost between two floor portals.
++	// (carrying the hull's center would jump the camera there). Do it at the
++	// moment the eye was on the plane, then finish this tick's move on the
++	// exit side: mapping the end of the move instead leaves the hull too deep
++	// in the exit, and pushing it out gained height every loop between two
++	// floor portals.
 +	Vector vecViewOffset = player->GetViewOffset();
-+	Vector vecOrigin = matToLinked.VMul4x3( mv->GetAbsOrigin() + vecViewOffset ) - vecViewOffset;
++	int k;
++	float flSign, flDist;
++	pPortal->GetPlaneAxis( &k, &flSign, &flDist );
++	float flEyeStart = flSign * ( vecEyeStart[k] - flDist );
++	float flEyeEnd = flSign * ( vecEye[k] - flDist );
++	float flCross = ( flEyeStart - flEyeEnd > 0.001f ) ? clamp( flEyeStart / ( flEyeStart - flEyeEnd ), 0.0f, 1.0f ) : 1.0f;
++	Vector vecCross = vecOriginStart + ( mv->GetAbsOrigin() - vecOriginStart ) * flCross;
++	Vector vecOrigin = matToLinked.VMul4x3( vecCross + vecViewOffset ) - vecViewOffset;
++	Vector vecRestOfMove = matToLinked.VMul3x3( mv->GetAbsOrigin() - vecCross );
 +
 +	Vector vecVelocity = matToLinked.VMul3x3( mv->m_vecVelocity );
 +	Vector vecExitNormal = pLinked->GetSurfaceNormal();
@@ -1071,7 +1083,18 @@ index e54f63d..d5a43b2 100644
 +	// If the hull can't sit there (doesn't fit the exit hole), move it out of
 +	// the exit only as far as it takes, so the camera barely moves.
 +	trace_t tr;
-+	if ( TestPlayerPosition( vecOrigin, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) != INVALID_EHANDLE )
++	if ( TestPlayerPosition( vecOrigin, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
++	{
++		if ( vecRestOfMove.LengthSqr() > 0.0001f )
++		{
++			TracePlayerBBox( vecOrigin, vecOrigin + vecRestOfMove, PlayerSolidMask(), COLLISION_GROUP_PLAYER_MOVEMENT, tr );
++			if ( !tr.startsolid )
++			{
++				vecOrigin = tr.endpos;
++			}
++		}
++	}
++	else
 +	{
 +		Vector vecMid = ( GetPlayerMins() + GetPlayerMaxs() ) * 0.5f;
 +		Vector vecHalf = ( GetPlayerMaxs() - GetPlayerMins() ) * 0.5f;

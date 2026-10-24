@@ -70,7 +70,18 @@ movement, so the client predicts it. `CHL2GameMovement` (HL2MP) routes `TracePla
 - Server: `CHL2MP_Player::VPhysicsShadowUpdate` keeps the player's physics shadow with the player while in a hole.
   VPhysics doesn't know about portals (the wall stops the shadow), and the base class's stuck checks use plain traces;
   together they put the player back on the shadow every tick.
-- Off-center players and non-axis-aligned portals use the server teleport above (snap, unpredicted).
+- The server never teleports players at these portals (it used to snap off-center players, which fought client
+  prediction: snaps at angles and edges, between floor portals, lost speed). Instead `UTIL_HL2MPPortal_PlayerFunnelMove`
+  (called at the start of `PlayerMove`) slides a player heading into the hole a little off-center into line: center
+  over the portal (ellipse x1.1), moving toward the plane (or standing on a floor portal), within 0.25 s of it; moved
+  sideways at up to 600 u/s by a hull trace. Centered outside that, the rim is solid (stand on a floor portal's edge).
+- The transition maps the position at the moment the eye was on the plane (interpolated along the tick's move), then
+  finishes the rest of the move on the exit side with a hull trace. The eye stays continuous, so floor<->wall portals
+  don't jump the camera, and loops between floor portals don't gain height. Only if that spot is blocked is the hull
+  stepped out of the exit, 2 units at a time.
+- Client: on the first prediction of a transition the prediction-error smoothing offset is cleared and
+  `C_HL2MP_Player::PostThink` resets position interpolation, so the camera never blends across the portal.
+- Only portals on sloped surfaces (normal not along a world axis) still teleport players on the server.
 
 ## Held objects through portals (server, shared grab controller)
 

@@ -82,8 +82,8 @@ it, and puts an "HL2DM Portal" shortcut on the desktop.
 
 Slow PC? Start once with the "HL2DM Portal (low graphics)" shortcut (or type
 "exec potato" in the console): lowest graphics, saved for later launches.
-Portal quality: Options > Multiplayer > Advanced, or the console variable
-cl_portal_quality (0 off, 1 low, 2 medium, 3 high, 4 auto = default).
+Portal quality: "Portal Settings" in the main menu (console: portal_settings),
+or the console variable cl_portal_quality (0 off, 1 low, 2 medium, 3 high, 4 auto = default).
 
 Controls: M1 blue portal, M2 orange portal, R close both. Slot 1 weapon.
 Source and docs: https://github.com/versitalai/hl2dm-portalmod

@@ -270,9 +270,12 @@ private:
 		if ( m_flLoopStart > 0.0f )
 		{
 			float flZ = pBot->GetAbsOrigin().z;
-			if ( gpGlobals->curtime - m_flLoopStart < 3.0f )
+			// Skip the first 3 s (it speeds up to the minimum exit speed), then
+			// compare the next 3 s with the 3 after: a loop must not gain height.
+			float flT = gpGlobals->curtime - m_flLoopStart;
+			if ( flT >= 3.0f && flT < 6.0f )
 				m_flPeakEarly = MAX( m_flPeakEarly, flZ );
-			else
+			else if ( flT >= 6.0f )
 				m_flPeakLate = MAX( m_flPeakLate, flZ );
 		}
 	}
@@ -643,12 +646,20 @@ private:
 			pCrate->Activate();
 			m_hCrate = pCrate;
 			m_iCrateHealth = pCrate->GetHealth();
-			m_flAttackUntil = gpGlobals->curtime + 0.6f;
-			Wait( 1.2f );
+			Wait( 1.5f );	// let the crowbar finish deploying
 			return;
 		}
 
 		case 9:
+		{
+			CBasePlayer *pBot = ToBasePlayer( m_hBot );
+			Msg( "PORTALTEST info swinging %s\n", pBot->GetActiveWeapon() ? pBot->GetActiveWeapon()->GetClassname() : "nothing" );
+			m_flAttackUntil = gpGlobals->curtime + 1.0f;
+			Wait( 1.5f );
+			return;
+		}
+
+		case 10:
 		{
 			int iHealth = m_hCrate ? m_hCrate->GetHealth() : -1;
 			Result( "melee_through_portal", !m_hCrate || iHealth < m_iCrateHealth, "crate_health %d -> %d", m_iCrateHealth, iHealth );
@@ -666,7 +677,7 @@ private:
 			return;
 		}
 
-		case 10:
+		case 11:
 		{
 			float flMoved = ( ToBasePlayer( m_hBot )->GetAbsOrigin() - m_vecEdgeStart ).Length();
 			Result( "floor_edge_stands_still", flMoved < 4.0f && BotSnaps() == 0, "moved=%.1f snaps=%d", flMoved, BotSnaps() );
@@ -680,7 +691,7 @@ private:
 			return;
 		}
 
-		case 11:
+		case 12:
 		{
 			Result( "floor_portal_funnels_in", m_flScenarioClosestW < 100.0f && BotSnaps() == 0, "closest_to_other=%.0f snaps=%d", m_flScenarioClosestW, BotSnaps() );
 
@@ -715,16 +726,16 @@ private:
 			PlaceBot( m_hFloor->GetAbsOrigin() + Vector( 0, 0, 1 ), m_angBot, vec3_origin );
 			m_flLoopStart = gpGlobals->curtime;
 			m_flPeakEarly = m_flPeakLate = -FLT_MAX;
-			Wait( 6.0f );
+			Wait( 9.0f );
 			return;
 		}
 
-		case 12:
+		case 13:
 		{
 			m_flLoopStart = -1.0f;
 			float flFloor = m_hFloor->GetAbsOrigin().z;
-			Result( "floor_loop_no_height_gain", m_flPeakLate <= m_flPeakEarly + 16.0f && BotSnaps() == 0,
-				"peak_first_3s=%.0f peak_last_3s=%.0f (above floor) snaps=%d", m_flPeakEarly - flFloor, m_flPeakLate - flFloor, BotSnaps() );
+			Result( "floor_loop_no_height_gain", m_flPeakLate <= m_flPeakEarly + 4.0f && BotSnaps() == 0,
+				"peak_3_to_6s=%.1f peak_6_to_9s=%.1f (above floor) snaps=%d", m_flPeakEarly - flFloor, m_flPeakLate - flFloor, BotSnaps() );
 
 			m_hBot = NULL;
 			Finish();
