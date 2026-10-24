@@ -768,6 +768,11 @@ private:
 			VectorAngles( vecRight, angOut );
 			PlaceBot( m_hFloor->GetAbsOrigin() + vecRight * 20.0f + Vector( 0, 0, 0.1f ), angOut, vec3_origin );	// on the floor, not dropping onto it
 			m_flBotForward = 200.0f;
+			m_flTickLogUntil = gpGlobals->curtime + 0.6f;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
+			Msg( "PORTALTEST info walk-off start (%.1f %.1f %.1f) facing yaw %.0f, wall portal at (%.1f %.1f %.1f)\n",
+				ToBasePlayer( m_hBot )->GetAbsOrigin().x, ToBasePlayer( m_hBot )->GetAbsOrigin().y, ToBasePlayer( m_hBot )->GetAbsOrigin().z, angOut.y,
+				m_hWall->GetAbsOrigin().x, m_hWall->GetAbsOrigin().y, m_hWall->GetAbsOrigin().z );
 			Wait( 1.5f );
 			return;
 		}
@@ -776,6 +781,7 @@ private:
 		{
 			Vector vecFromHole = ToBasePlayer( m_hBot )->GetAbsOrigin() - m_hFloor->GetAbsOrigin();
 			vecFromHole.z = 0.0f;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
 			Result( "floor_edge_walk_off", m_flScenarioClosestW >= 100.0f && vecFromHole.Length() > 60.0f && BotSnaps() == 0,
 				"closest_to_other=%.0f now %.0f from the hole snaps=%d", m_flScenarioClosestW, vecFromHole.Length(), BotSnaps() );
 			m_flBotForward = 0.0f;
