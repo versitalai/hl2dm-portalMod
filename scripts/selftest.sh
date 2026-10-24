@@ -34,10 +34,12 @@ else
 fi
 echo ">> server exited ($?)"
 
-grep -E "PORTALTEST|SIGSEGV|Segmentation|crash|Couldn't|Failed to load|error|^#[0-9]" "$LOG" | grep -vE "PORTALTEST (move|info loop|info held box)" | head -80 || true
+grep -E "PORTALTEST|SIGSEGV|Segmentation|crash|Couldn't|Failed to load|error|^#[0-9]" "$LOG" | grep -vE "PORTALTEST (move|tick|info loop|info held box)" | head -80 || true
 # Movement diagnostics from the floor-portal loop (sv_portal_debug_moves).
 echo ">> floor loop trace:"
 grep -E "PORTALTEST (move|info loop)" "$LOG" | head -60 || true
+echo ">> fast fall trace:"
+grep -E "PORTALTEST (tick|move)" "$LOG" | head -75 || true
 echo ">> held box trace:"
 grep -E "PORTALTEST info held box" "$LOG" | head -14 || true
 

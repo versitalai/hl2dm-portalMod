@@ -1044,7 +1044,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..a4f9dc1 100644
+index e54f63d..7046873 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -1062,7 +1062,7 @@ index e54f63d..a4f9dc1 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +537,253 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +537,260 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1176,6 +1176,7 @@ index e54f63d..a4f9dc1 100644
 +	// If the hull can't sit there (doesn't fit the exit hole), move it out of
 +	// the exit only as far as it takes, so the camera barely moves.
 +	trace_t tr;
++	const char *pszExit = "direct";
 +	if ( TestPlayerPosition( vecOrigin, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
 +	{
 +		if ( vecRestOfMove.LengthSqr() > 0.0001f )
@@ -1197,9 +1198,11 @@ index e54f63d..a4f9dc1 100644
 +		// bottom edge (in the floor), which no push straight out can fix; that
 +		// left the player stuck and stopped dead.
 +		Vector vecShift;
++		pszExit = "pushed out";
 +		if ( pLinked->GetHoleFitShift( vecOrigin + vecMid, vecHalf, &vecShift, -0.1f ) && vecShift.LengthSqr() > 0.0001f )
 +		{
 +			vecOrigin += vecShift;
++			pszExit = "lined up";
 +		}
 +
 +		float flExtent = fabs( vecExitNormal.x ) * vecHalf.x + fabs( vecExitNormal.y ) * vecHalf.y + fabs( vecExitNormal.z ) * vecHalf.z;
@@ -1217,6 +1220,10 @@ index e54f63d..a4f9dc1 100644
 +			}
 +		}
 +		vecOrigin = vecOut;
++		if ( TestPlayerPosition( vecOrigin, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) != INVALID_EHANDLE )
++		{
++			pszExit = "STUCK";
++		}
 +
 +		if ( vecRestOfMove.LengthSqr() > 0.0001f && TestPlayerPosition( vecOrigin, COLLISION_GROUP_PLAYER_MOVEMENT, tr ) == INVALID_EHANDLE )
 +		{
@@ -1259,9 +1266,9 @@ index e54f63d..a4f9dc1 100644
 +#ifdef GAME_DLL
 +	if ( sv_portal_debug_moves.GetBool() )
 +	{
-+		Msg( "PORTALTEST move t=%.3f eye %.1f -> %.1f cross %.2f z %.1f -> %.1f (wanted %.1f) vz %.0f -> %.0f\n",
++		Msg( "PORTALTEST move t=%.3f eye %.1f -> %.1f cross %.2f z %.1f -> %.1f (wanted %.1f) vz %.0f -> %.0f, exit %s at (%.1f %.1f %.1f) vel (%.0f %.0f %.0f)\n",
 +			gpGlobals->curtime, flEyeStart, flEyeEnd, flCross, mv->GetAbsOrigin().z, vecOrigin.z, vecWanted.z,
-+			mv->m_vecVelocity.z, vecVelocity.z );
++			mv->m_vecVelocity.z, vecVelocity.z, pszExit, vecOrigin.x, vecOrigin.y, vecOrigin.z, vecVelocity.x, vecVelocity.y, vecVelocity.z );
 +	}
 +#endif
 +

@@ -46,6 +46,7 @@ public:
 		m_hExitTrack = NULL;
 		m_flFastFallMin = FLT_MAX;
 		m_flHeldLogUntil = m_flNextHeldLog = 0.0f;
+		m_flTickLogUntil = 0.0f;
 		m_flLoopStart = -1.0f;
 		m_flPeakEarly = m_flPeakLate = -FLT_MAX;
 		m_flLastVz = 0.0f;
@@ -272,6 +273,13 @@ private:
 		if ( m_bTrackExitSpeed && m_flExitSpeed < 0.0f && pExitTrack && ( vecCenter - pExitTrack->GetAbsOrigin() ).Length() < 100.0f )
 		{
 			m_flExitSpeed = pBot->GetAbsVelocity().Length();
+		}
+
+		if ( gpGlobals->curtime < m_flTickLogUntil )
+		{
+			Vector p = pBot->GetAbsOrigin(), v = pBot->GetAbsVelocity();
+			Msg( "PORTALTEST tick t=%.3f bot (%.1f %.1f %.1f) vel (%.0f %.0f %.0f) ground=%s\n", gpGlobals->curtime, p.x, p.y, p.z, v.x, v.y, v.z,
+				pBot->GetGroundEntity() ? pBot->GetGroundEntity()->GetClassname() : "none" );
 		}
 
 		if ( gpGlobals->curtime < m_flHeldLogUntil && gpGlobals->curtime >= m_flNextHeldLog && m_hHeldBox && m_hFloor )
@@ -800,6 +808,8 @@ private:
 				float flHeight = MAX( ( trUp.endpos.z - vecFloorSpot.z ) - 4.0f, 2.0f );
 				Msg( "PORTALTEST info fast fall %d from %.0f up\n", m_iStep - 14, flHeight );
 				PlaceBot( vecFloorSpot + Vector( 0, 0, flHeight ), m_angBot, Vector( 0, 0, -1200 ) );
+				m_flTickLogUntil = gpGlobals->curtime + 0.3f;
+				ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
 				m_hExitTrack = m_hWall;
 				m_flExitSpeed = -1.0f;
 				m_bTrackExitSpeed = true;
@@ -811,6 +821,7 @@ private:
 		{
 			m_bTrackExitSpeed = false;
 			m_hExitTrack = NULL;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
 			Result( "fast_fall_keeps_speed", m_flFastFallMin >= 1000.0f && BotSnaps() == 0, "slowest_exit_speed=%.0f snaps=%d", m_flFastFallMin, BotSnaps() );
 
 			// Bug report: walking into a portal whose exit is blocked froze you,
@@ -963,7 +974,8 @@ private:
 	int		m_iCrateHealth;
 	Vector	m_vecEdgeStart;
 	CHandle<CHL2MPPortal> m_hExitTrack;
-	float	m_flHeldLogUntil, m_flNextHeldLog;	// exit speed is measured near this portal (default floor)
+	float	m_flHeldLogUntil, m_flNextHeldLog;
+	float	m_flTickLogUntil;	// exit speed is measured near this portal (default floor)
 	float	m_flFastFallMin;
 	EHANDLE	m_hBlocker;
 };
