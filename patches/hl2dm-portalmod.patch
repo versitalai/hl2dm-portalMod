@@ -1044,7 +1044,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..cd12a44 100644
+index e54f63d..e4d23ce 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -1102,7 +1102,7 @@ index e54f63d..cd12a44 100644
 +#define PORTAL_MIN_UPWARD_EXIT_SPEED	250.0f
 +
 +#ifdef GAME_DLL
-+static ConVar sv_portal_debug_moves( "sv_portal_debug_moves", "0", FCVAR_NONE, "Log each player portal transition to the console." );
++ConVar sv_portal_debug_moves( "sv_portal_debug_moves", "0", FCVAR_NONE, "Log each player portal transition, and blasts going through portals, to the console." );
 +#endif
 +
 +void CHL2GameMovement::PlayerMove( void )

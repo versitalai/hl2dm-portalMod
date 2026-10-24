@@ -76,7 +76,8 @@ movement, so the client predicts it. `CHL2GameMovement` (HL2MP) routes `TracePla
   over the portal (ellipse x1.1), moving toward the plane (or standing on a floor portal), within 0.25 s of it; moved
   sideways at up to 600 u/s by a hull trace. Centered outside that, the rim is solid (stand on a floor portal's edge).
   Standing on a floor portal (not moving into it) is funneled only when well over the hole (ellipse x0.8), not while
-  walking away from it, at 80 u/s: faster pulls trapped players on the edge.
+  walking away from it, at 80 u/s: faster pulls trapped players on the edge. Approaching at under 50 u/s counts as
+  standing (a small drop onto the edge isn't heading in).
 - No room in front of the linked portal (`HasRoomForHull`: a hull test just out of it against the world, players and
   fixed props; loose physics props never count) and not yet through the plane: the carving is off, the portal is a
   plain wall or floor. Cached per tick per portal.

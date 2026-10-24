@@ -45,6 +45,7 @@ public:
 		m_bTrackExitSpeed = false;
 		m_hExitTrack = NULL;
 		m_flFastFallMin = FLT_MAX;
+		m_flHeldLogUntil = m_flNextHeldLog = 0.0f;
 		m_flLoopStart = -1.0f;
 		m_flPeakEarly = m_flPeakLate = -FLT_MAX;
 		m_flLastVz = 0.0f;
@@ -271,6 +272,19 @@ private:
 		if ( m_bTrackExitSpeed && m_flExitSpeed < 0.0f && pExitTrack && ( vecCenter - pExitTrack->GetAbsOrigin() ).Length() < 100.0f )
 		{
 			m_flExitSpeed = pBot->GetAbsVelocity().Length();
+		}
+
+		if ( gpGlobals->curtime < m_flHeldLogUntil && gpGlobals->curtime >= m_flNextHeldLog && m_hHeldBox && m_hFloor )
+		{
+			m_flNextHeldLog = gpGlobals->curtime + 0.25f;
+			extern bool PhysCannon_GetHeldObjectTarget( CBaseEntity *pObject, Vector *pTarget );
+			Vector vecTarget( 0, 0, 0 );
+			bool bTarget = PhysCannon_GetHeldObjectTarget( m_hHeldBox, &vecTarget );
+			Vector b = m_hHeldBox->WorldSpaceCenter();
+			Vector vecNormal = m_hFloor->GetSurfaceNormal();
+			Msg( "PORTALTEST info held box at (%.0f %.0f %.0f) %.0f off the floor portal, target %d (%.0f %.0f %.0f) %.0f off it, should_teleport=%d\n",
+				b.x, b.y, b.z, DotProduct( b - m_hFloor->GetAbsOrigin(), vecNormal ), bTarget, vecTarget.x, vecTarget.y, vecTarget.z,
+				DotProduct( vecTarget - m_hFloor->GetAbsOrigin(), vecNormal ), m_hFloor->ShouldTeleport( m_hHeldBox ) );
 		}
 
 		if ( m_flLoopStart > 0.0f )
@@ -649,6 +663,7 @@ private:
 			// away from the portal: the box, held through it, has to come back.
 			m_nBoxTeleportsBefore = m_hHeldBox ? CHL2MPPortal::CountTeleports( m_hHeldBox ) : 0;
 			m_angBot.y += 75.0f;
+			m_flHeldLogUntil = gpGlobals->curtime + 3.0f;
 			Wait( 3.0f );
 			return;
 		}
@@ -768,14 +783,22 @@ private:
 			if ( m_iStep > 15 && m_bTrackExitSpeed )
 			{
 				m_flFastFallMin = MIN( m_flFastFallMin, MAX( m_flExitSpeed, 0.0f ) );
-				Msg( "PORTALTEST info fast fall %d exit_speed=%.0f\n", m_iStep - 15, m_flExitSpeed );
+				Vector v = ToBasePlayer( m_hBot )->GetAbsOrigin();
+				Msg( "PORTALTEST info fast fall %d exit_speed=%.0f, bot now at (%.0f %.0f %.0f) speed %.0f\n", m_iStep - 15, m_flExitSpeed,
+					v.x, v.y, v.z, ToBasePlayer( m_hBot )->GetAbsVelocity().Length() );
 			}
 			if ( m_iStep <= 17 )
 			{
 				Vector vecUp;
 				m_hFloor->GetPortalVectors( NULL, NULL, &vecUp );
 				float flOffsets[3] = { 0.0f, 24.0f, -24.0f };
-				PlaceBot( m_hFloor->GetAbsOrigin() + vecUp * flOffsets[m_iStep - 15] + Vector( 0, 0, 300 ), m_angBot, Vector( 0, 0, -1200 ) );
+				Vector vecFloorSpot = m_hFloor->GetAbsOrigin() + vecUp * flOffsets[m_iStep - 15];
+				// As high as the room allows (the 1200 u/s start does the rest).
+				trace_t trUp;
+				UTIL_TraceHull( vecFloorSpot + Vector( 0, 0, 2 ), vecFloorSpot + Vector( 0, 0, 300 ), VEC_HULL_MIN, VEC_HULL_MAX, MASK_PLAYERSOLID, m_hBot, COLLISION_GROUP_PLAYER_MOVEMENT, &trUp );
+				float flHeight = MAX( ( trUp.endpos.z - vecFloorSpot.z ) - 4.0f, 2.0f );
+				Msg( "PORTALTEST info fast fall %d from %.0f up\n", m_iStep - 14, flHeight );
+				PlaceBot( vecFloorSpot + Vector( 0, 0, flHeight ), m_angBot, Vector( 0, 0, -1200 ) );
 				m_hExitTrack = m_hWall;
 				m_flExitSpeed = -1.0f;
 				m_bTrackExitSpeed = true;
@@ -792,7 +815,7 @@ private:
 			// Bug report: walking into a portal whose exit is blocked froze you,
 			// even in the air. Block the wall portal's exit with a crate; the
 			// floor portal must then be plain floor.
-			CBaseEntity *pBlocker = CreateEntityByName( "prop_dynamic" );
+			CBaseEntity *pBlocker = CreateEntityByName( "prop_dynamic_override" );
 			pBlocker->SetAbsOrigin( m_hWall->GetAbsOrigin() + m_vecWallNormal * 24.0f );
 			pBlocker->KeyValue( "model", "models/props_junk/wood_crate001a.mdl" );
 			pBlocker->KeyValue( "solid", "6" );
@@ -831,7 +854,9 @@ private:
 			m_iCrateHealth = pCrate->GetHealth();
 			Vector vecBlast = m_hWall->GetAbsOrigin() + m_vecWallNormal * 40.0f;
 			Msg( "PORTALTEST info blast %.0f from the crate directly\n", ( vecBlast - pCrate->WorldSpaceCenter() ).Length() );
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
 			ExplosionCreate( vecBlast, vec3_angle, NULL, 100, 150, true );
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
 			Wait( 0.5f );
 			return;
 		}
@@ -927,7 +952,8 @@ private:
 	int		m_nSnapsBefore, m_nBoxTeleportsBefore;
 	int		m_iCrateHealth;
 	Vector	m_vecEdgeStart;
-	CHandle<CHL2MPPortal> m_hExitTrack;	// exit speed is measured near this portal (default floor)
+	CHandle<CHL2MPPortal> m_hExitTrack;
+	float	m_flHeldLogUntil, m_flNextHeldLog;	// exit speed is measured near this portal (default floor)
 	float	m_flFastFallMin;
 	EHANDLE	m_hBlocker;
 };

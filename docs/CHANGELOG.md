@@ -13,7 +13,8 @@ From the v0.4.2 play-test. Each fix except the settings window and the camera ea
   first, then pushes out, then finishes the tick's move.
 - **Stuck at a floor portal's edge / snapped in when standing there.** The funnel pulled anyone standing with their
   center over the hole toward its middle at 150-600 u/s, faster than walking away. Standing players are now funneled
-  only when well over the hole (ellipse x0.8), not while walking away from it, and slowly (80 u/s).
+  only when well over the hole (ellipse x0.8), not while walking away from it, and slowly (80 u/s). Dropping onto
+  it at under 50 u/s (stepping off a ledge) counts as standing.
 - **Walking into a portal whose exit is blocked froze you (even mid-air).** Each portal checks for room in front of
   the other one (world, players and fixed props; loose props never block). With no room it's a plain wall/floor.
 - **Hard to bring a held object back through.** Pulled back toward you, the object was dragged at a point behind the

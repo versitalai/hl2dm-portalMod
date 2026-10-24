@@ -478,8 +478,10 @@ Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector 
 			continue;
 
 		// Heading into it: moving toward the plane, or standing on a floor portal.
+		// Under 50 u/s counts as standing: stepping off a ledge onto a floor
+		// portal's edge isn't heading into it.
 		float flApproach = -flSign * vecVelocity[k];
-		bool bStanding = ( flApproach < 1.0f );
+		bool bStanding = ( flApproach < 50.0f );
 		if ( bStanding && !( k == 2 && flSign > 0.0f ) )
 			continue;
 		float flLookahead = MAX( 2.0f, flApproach * 0.25f );
@@ -1324,8 +1326,12 @@ void CHL2MPPortal::AddPortalsToPVS( unsigned char *pvs, int pvssize )
 	}
 }
 
+extern ConVar sv_portal_debug_moves;
+
 void UTIL_HL2MPPortal_RadiusDamage( const CTakeDamageInfo &info, const Vector &vecSrc, float flRadius, int iClassIgnore, CBaseEntity *pEntityIgnore )
 {
+	if ( sv_portal_debug_moves.GetBool() )
+		Msg( "PORTALTEST blast at (%.0f %.0f %.0f) radius %.0f damage %.0f\n", vecSrc.x, vecSrc.y, vecSrc.z, flRadius, info.GetDamage() );
 	if ( flRadius <= 0.0f || info.GetDamage() <= 0.0f )
 		return;
 
@@ -1363,13 +1369,23 @@ void UTIL_HL2MPPortal_RadiusDamage( const CTakeDamageInfo &info, const Vector &v
 		trace_t tr;
 		UTIL_TraceLine( vecSrc, vecHole + vecNormal * 2.0f, MASK_SOLID_BRUSHONLY, NULL, COLLISION_GROUP_NONE, &tr );
 		if ( tr.fraction < 1.0f )
+		{
+			if ( sv_portal_debug_moves.GetBool() )
+				Msg( "PORTALTEST blast can't see the portal hole (blocked at %.2f)\n", tr.fraction );
 			continue;
+		}
 
 		// The rest goes off just out of the other portal, with the damage it
 		// would still have there (same falloff over the whole path).
 		CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
 		VMatrix matToLinked = pPortal->MatrixThisToLinked();
 		Vector vecExitSrc = matToLinked.VMul4x3( vecHole ) + pLinked->GetSurfaceNormal() * 2.0f;
+
+		if ( sv_portal_debug_moves.GetBool() )
+		{
+			Msg( "PORTALTEST blast through portal: %.0f to the hole, radius %.0f -> %.0f, damage %.0f -> %.0f, out at (%.0f %.0f %.0f)\n",
+				flToHole, flRadius, flRemaining, info.GetDamage(), info.GetDamage() * flRemaining / flRadius, vecExitSrc.x, vecExitSrc.y, vecExitSrc.z );
+		}
 
 		CTakeDamageInfo infoExit = info;
 		infoExit.SetDamage( info.GetDamage() * flRemaining / flRadius );
