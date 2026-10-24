@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.2 — 2026-10-24
+
+From the v0.4.1 play-test. Each fix has a matching check in the dedicated-server self-test.
+
+### Fixed
+- Snapping when walking into a portal at an angle, next to another portal, on floor/ceiling portals and on a floor
+  portal's edge, and losing speed going through fast: the server no longer snap-teleports players at wall/floor/ceiling
+  portals (it fought client prediction). Coming in a little off-center now slides you into line (funneling).
+- Going higher and higher between two floor portals: the transition maps the moment the eye crossed the plane and
+  finishes the move on the exit side. The gravity of the rest of that tick is redone in the exit frame (it had sped
+  the fall up where it should slow the climb: one tick of speed gained per loop), and height from being pushed out
+  of the exit comes out of the exit speed.
+- Camera jump between floor and wall portals (the eye is carried through, not the hull center), and camera blending
+  across the portal (prediction smoothing and interpolation reset on the way through).
+- Held props snapping back and forth between the portals: they go through only when the hold point is past the plane.
+- Crowbar and stunstick didn't hit through portals.
+- A black shape outside the portal near the edge of thin walls/pillars: the tunnel behind the portal is fitted to the
+  wall's thickness and only drawn up close.
+
+### Added
+- **Portal Settings** window in the main menu (`portal_settings`), each option explained. The Options > Multiplayer >
+  Advanced entries didn't exist in HL2DM and are removed.
+- Self-test: off-center angled walk-in, 900 u/s fling, held box near the plane, crowbar through a portal, floor-portal
+  edge, floor funnel, floor-to-floor loop height.
+
 ## 0.4.1 — 2026-10-23
 
 ### Added

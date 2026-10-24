@@ -16,7 +16,12 @@
 - **Own weapon** isn't drawn on your model in portal views (first-person weapon uses the view model).
 - **Placement is server-only**, so a laggy client sees its portal appear after a round trip.
 - **Content reuse.** Gun uses the gravity gun models/sounds and HUD icon. Portals are drawn procedurally.
-- Off-center players (hull outside the hole) and players at non-axis-aligned portals snap through on the server, unpredicted.
+- Players at portals on sloped surfaces snap through on the server, unpredicted.
+- **Props pop through** (the whole prop at once), they don't slide through: VPhysics keeps the wall around the hole
+  solid. Smooth crossing needs Portal-style physics carving (a physics copy of the geometry around each portal). Held
+  props no longer flip back and forth.
+- **Soundscapes restart** when you go through into another area of the map (e.g. dm_lockdown's announcer), like
+  walking between areas, just instant. A short delay before the soundscape switches would hide it.
 
 ## Ideas / next steps
 1. Play-test pass: tune `sv_portal_lookahead`, exit gap, placement step; check prediction feel through portals.

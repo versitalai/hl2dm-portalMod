@@ -40,6 +40,8 @@ ConVar cl_portal_render_views( "cl_portal_render_views", "1", FCVAR_ARCHIVE, "Re
 #define PORTAL_EXIT_GAP			2.0f
 // An entity this close to the plane and not moving away goes through.
 #define PORTAL_TOUCH_DIST		1.0f
+// How far past the plane a held object's hold point must be before it goes through.
+#define PORTAL_HELD_THROUGH_DIST	2.0f
 // Depth of the detection volume in front of / behind the plane.
 #define PORTAL_DETECT_FRONT		160.0f
 #define PORTAL_DETECT_BACK		8.0f
@@ -98,6 +100,8 @@ CHL2MPPortal::CHL2MPPortal()
 		m_iViewSlot[i] = -1;
 		m_iViewStamp[i] = -1;
 	}
+	m_flTunnelDepth = 0.0f;
+	m_nTunnelVersion = 0;
 #endif
 	s_HL2MPPortals.AddToTail( this );
 }
@@ -299,6 +303,83 @@ bool CHL2MPPortal::HullFitsHole( const Vector &vecCenter, const Vector &vecHalf 
 	int k;
 	float flSign, flDist;
 	return GetPlaneAxis( &k, &flSign, &flDist ) && PortalHullFootprintInside( this, vecCenter, vecHalf, k, flDist );
+}
+
+// Extent of an axis-aligned box (half sizes) along a direction.
+static float BoxSupport( const Vector &vHalf, const Vector &vDir )
+{
+	return fabs( vDir.x ) * vHalf.x + fabs( vDir.y ) * vHalf.y + fabs( vDir.z ) * vHalf.z;
+}
+
+Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocity, float flFrameTime )
+{
+	Vector vecMid = ( vecMins + vecMaxs ) * 0.5f;
+	Vector vecHalf = ( vecMaxs - vecMins ) * 0.5f;
+	Vector vecCenter = vecOrigin + vecMid;
+
+	for ( int iPortal = 0; iPortal < s_HL2MPPortals.Count(); iPortal++ )
+	{
+		CHL2MPPortal *pPortal = s_HL2MPPortals[iPortal];
+		if ( !pPortal->CanCarve() )
+			continue;
+#ifdef CLIENT_DLL
+		if ( pPortal->IsDormant() || pPortal->GetLinkedPortal()->IsDormant() )
+			continue;
+#endif
+
+		int k;
+		float flSign, flDist;
+		pPortal->GetPlaneAxis( &k, &flSign, &flDist );
+
+		// Already into the hole: the carved collision takes it from here.
+		float flGap = PortalHullGap( vecCenter, vecHalf, k, flSign, flDist );
+		if ( flGap < -1.0f )
+			continue;
+
+		// Heading into it: moving toward the plane, or standing on a floor portal.
+		float flApproach = -flSign * vecVelocity[k];
+		bool bFloor = ( k == 2 && flSign > 0.0f );
+		if ( flApproach < 1.0f && !bFloor )
+			continue;
+		float flLookahead = MAX( 2.0f, flApproach * 0.25f );
+		if ( flGap > flLookahead )
+			continue;
+
+		// Only when aimed at the hole: the hull's center over the portal.
+		Vector vecOnPlane = vecCenter;
+		vecOnPlane[k] = flDist;
+		if ( !pPortal->IsPointInEllipse( vecOnPlane, 1.1f ) )
+			continue;
+
+		// Where the center has to be for the footprint to fit the hole (same
+		// rectangle, with its 1 unit of slack, as the collision carving).
+		Vector vecRight, vecUp;
+		pPortal->GetPortalVectors( NULL, &vecRight, &vecUp );
+		Vector vecPlanarHalf = vecHalf;
+		vecPlanarHalf[k] = 0.0f;
+		float flRoomRight = HL2MP_PORTAL_HALF_WIDTH + 0.75f - BoxSupport( vecPlanarHalf, vecRight );
+		float flRoomUp = HL2MP_PORTAL_HALF_HEIGHT + 0.75f - BoxSupport( vecPlanarHalf, vecUp );
+		if ( flRoomRight < 0.0f || flRoomUp < 0.0f )
+			continue;	// never fits
+
+		Vector vecDelta = vecOnPlane - pPortal->GetAbsOrigin();
+		float flX = DotProduct( vecDelta, vecRight );
+		float flY = DotProduct( vecDelta, vecUp );
+		Vector vecShift = vecRight * ( clamp( flX, -flRoomRight, flRoomRight ) - flX ) +
+			vecUp * ( clamp( flY, -flRoomUp, flRoomUp ) - flY );
+		vecShift[k] = 0.0f;
+		float flShift = vecShift.Length();
+		if ( flShift < 0.01f )
+			return vec3_origin;		// lined up
+
+		// Get there before reaching the plane, but no faster than a quick sidestep.
+		float flTimeToPlane = ( flApproach > 1.0f ) ? MAX( flGap, 0.0f ) / flApproach : 0.0f;
+		float flSpeed = clamp( flShift / MAX( flTimeToPlane, flFrameTime ), 150.0f, 600.0f );
+		float flStep = MIN( flShift, flSpeed * flFrameTime );
+		return vecShift * ( flStep / flShift );
+	}
+
+	return vec3_origin;
 }
 
 #define PORTAL_CARVE_EPSILON	0.1f
@@ -571,6 +652,17 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 
 static CUtlVector<EHANDLE> s_TeleportLog;
 
+int CHL2MPPortal::CountTeleports( CBaseEntity *pEntity )
+{
+	int nCount = 0;
+	for ( int i = 0; i < s_TeleportLog.Count(); i++ )
+	{
+		if ( s_TeleportLog[i] == pEntity )
+			nCount++;
+	}
+	return nCount;
+}
+
 bool CHL2MPPortal::WasTeleported( CBaseEntity *pEntity )
 {
 	for ( int i = 0; i < s_TeleportLog.Count(); i++ )
@@ -625,14 +717,10 @@ static void GetPortalEntityVelocity( CBaseEntity *pEntity, Vector *pVelocity, An
 }
 
 // Keep held objects held through portals (weapon_physcannon.cpp).
+extern bool PhysCannon_GetHeldObjectTarget( CBaseEntity *pObject, Vector *pTarget );
 extern void PhysCannon_HeldObjectWentThroughPortal( CBaseEntity *pObject, CHL2MPPortal *pPortal );
 extern void PhysCannon_HolderWentThroughPortal( CBasePlayer *pPlayer, CHL2MPPortal *pPortal );
 
-// Extent of an axis-aligned box (half sizes) along a direction.
-static float BoxSupport( const Vector &vHalf, const Vector &vDir )
-{
-	return fabs( vDir.x ) * vHalf.x + fabs( vDir.y ) * vHalf.y + fabs( vDir.z ) * vHalf.z;
-}
 
 int CHL2MPPortal::UpdateTransmitState( void )
 {
@@ -811,16 +899,13 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 			return false;
 	}
 
-	// Players whose hull fits the hole move through axis-aligned portals in
-	// their own movement code (UTIL_HL2MPPortal_TracePlayerHull), seamlessly
-	// and predicted. Otherwise (off-center, odd angle) they snap through here.
+	// Players move through axis-aligned portals only in their own movement
+	// code (UTIL_HL2MPPortal_TracePlayerHull, funneled into the hole), which
+	// the client predicts. Snapping them here as well fought that prediction:
+	// snaps at an angle, at the edge, between floor portals, lost speed.
+	// Only portals on sloped surfaces still teleport players here.
 	if ( pEntity->IsPlayer() && CanCarve() && pEntity->GetMoveType() == MOVETYPE_WALK )
-	{
-		Vector vecMins, vecMaxs;
-		pEntity->CollisionProp()->WorldSpaceAABB( &vecMins, &vecMaxs );
-		if ( HullFitsHole( ( vecMins + vecMaxs ) * 0.5f, ( vecMaxs - vecMins ) * 0.5f ) )
-			return false;
-	}
+		return false;
 
 	if ( pEntity->IsPlayer() )
 	{
@@ -857,6 +942,18 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	// is attached to something (SLAM tripmine on a wall) and stays put.
 	if ( !pEntity->IsPlayer() && pEntity->GetMoveType() != MOVETYPE_VPHYSICS && vVelocity.LengthSqr() < 1.0f )
 		return false;
+
+	// A held object only goes through when the spot it's held at is past the
+	// plane. Otherwise the hold pulls it back against the exit, it touches
+	// that portal and flips back, over and over.
+	IPhysicsObject *pHeldPhys = pEntity->VPhysicsGetObject();
+	if ( pEntity->GetMoveType() == MOVETYPE_VPHYSICS && pHeldPhys && ( pHeldPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
+	{
+		Vector vecHeldTarget;
+		if ( PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
+			DotProduct( vForward, vecHeldTarget - GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST )
+			return false;
+	}
 
 	bool bTouching = ( flGap <= PORTAL_TOUCH_DIST ) && ( flNormalSpeed <= 1.0f );
 	bool bArriving = ( flNormalSpeed < -1.0f ) && ( flGap <= -flNormalSpeed * TICK_INTERVAL * sv_portal_lookahead.GetFloat() + PORTAL_TOUCH_DIST );
@@ -1388,6 +1485,32 @@ static void DrawPortalRim( const Vector &vCenter, const Vector &vRight, const Ve
 	pMesh->Draw();
 }
 
+#define PORTAL_TUNNEL_DEPTH			24.0f
+// The tunnel is only needed when the camera is close enough to the plane for
+// the near plane to clip the wall and the surface.
+#define PORTAL_TUNNEL_DRAW_DIST		32.0f
+
+float C_HL2MPPortal::GetTunnelDepth()
+{
+	UpdateFrameCache();
+	if ( m_nTunnelVersion == m_nFrameVersion )
+		return m_flTunnelDepth;
+
+	// Trace into the wall from just behind the surface; where it leaves the
+	// solid is the wall's thickness.
+	trace_t tr;
+	Vector vStart = m_vecCacheOrigin - m_vecCacheForward * 0.5f;
+	UTIL_TraceLine( vStart, vStart - m_vecCacheForward * PORTAL_TUNNEL_DEPTH * 2.0f, MASK_SOLID_BRUSHONLY, NULL, COLLISION_GROUP_NONE, &tr );
+	float flThickness = PORTAL_TUNNEL_DEPTH;
+	if ( tr.startsolid && !tr.allsolid )
+	{
+		flThickness = tr.fractionleftsolid * PORTAL_TUNNEL_DEPTH * 2.0f;
+	}
+	m_flTunnelDepth = clamp( flThickness - 1.0f, 0.0f, PORTAL_TUNNEL_DEPTH );
+	m_nTunnelVersion = m_nFrameVersion;
+	return m_flTunnelDepth;
+}
+
 int C_HL2MPPortal::DrawModel( int flags )
 {
 	if ( !m_bActivated )
@@ -1416,7 +1539,11 @@ int C_HL2MPPortal::DrawModel( int flags )
 	if ( bHasView )
 	{
 		color32 white = { 255, 255, 255, 255 };
-		DrawPortalTunnel( GetPortalViewMaterial( iSlot ), GetAbsOrigin(), vForward, vRight, vUp, 24.0f );
+		float flTunnelDepth = GetTunnelDepth();
+		if ( flTunnelDepth > 1.0f && DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward ) < PORTAL_TUNNEL_DRAW_DIST )
+		{
+			DrawPortalTunnel( GetPortalViewMaterial( iSlot ), GetAbsOrigin(), vForward, vRight, vUp, flTunnelDepth );
+		}
 		// Close up the screen-space mapping needs fine tessellation; far away it's nearly affine.
 		float flDist = ( CurrentViewOrigin() - GetAbsOrigin() ).Length();
 		int nRings = ( flDist < 256.0f ) ? PORTAL_MESH_RINGS : ( flDist < 1024.0f ) ? 6 : 3;

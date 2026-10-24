@@ -39,7 +39,8 @@ From source on Linux, one command does it all (fetch SDK, build, package, instal
 | SLAM tripmine laser | Beam continues through portals (drawn on every segment). Anyone crossing any segment trips it; opening, closing or moving a portal on its path trips it too |
 
 Props you're holding (gravity gun or `+use`) stay held through portals, from either side. Walk into a wall or floor
-portal and you go through in one smooth move (no snap) when your eye crosses it; off-center you snap through. Props with
+portal and you go through in one smooth move (no snap) when your eye crosses it; a little off-center, you slide into line
+with the hole on the way in (funneling). Melee weapons (crowbar, stunstick) reach through portals too. Props with
 motion disabled, and things stuck to walls (a placed tripmine), stay put.
 
 ## See-through rendering
@@ -73,7 +74,8 @@ The gun is in weapon slot 1 (with crowbar / gravity gun). Portals are removed wh
 ## Graphics settings (slow PCs)
 
 Seeing through a portal means drawing the scene again, so portals are the mod's main cost. Pick a quality in
-**Options > Multiplayer > Advanced** ("Portal quality"), or with `cl_portal_quality` in the console:
+**Portal Settings** in the main menu (every option explained there), the `portal_settings` console command, or with
+`cl_portal_quality` in the console:
 
 | `cl_portal_quality` | Live views | Portal-in-portal | View resolution | Solid if smaller than |
 |---|---|---|---|---|
@@ -104,6 +106,7 @@ saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
 | `sv_portal_lookahead` | 3 | server | Ticks of lookahead for fast movers |
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |
 | `sv_portal_debug` | 0 | server (cheat) | Draw detection volumes, placement traces, exit boxes |
+| `sv_portal_debug_moves` | 0 | server | Log each player portal transition (eye depth, height and speed before/after) |
 
 ## Dedicated server
 

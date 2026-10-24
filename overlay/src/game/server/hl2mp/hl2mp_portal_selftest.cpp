@@ -37,13 +37,24 @@ public:
 		m_flTransitTime = -1.0f;
 		m_bRocketThrough = false;
 		m_bSnapFirst = m_bHeldAfterTransit = false;
+		m_bScenario = false;
+		m_flBotForward = 0.0f;
+		m_flAttackUntil = 0.0f;
+		m_flExitSpeed = -1.0f;
+		m_bTrackExitSpeed = false;
+		m_flLoopStart = -1.0f;
+		m_flPeakEarly = m_flPeakLate = -FLT_MAX;
+		m_flLastVz = 0.0f;
+		m_flLastZ = m_flLastTime = 0.0f;
+		m_flScenarioClosestF = m_flScenarioClosestW = FLT_MAX;
+		m_nSnapsBefore = m_nBoxTeleportsBefore = 0;
 	}
 
 	virtual void LevelInitPostEntity()
 	{
 		m_iStep = sv_portal_selftest.GetBool() ? 0 : -1;
 		m_flNextStep = gpGlobals->curtime + 2.0f;
-		m_flRealDeadline = Plat_FloatTime() + 180.0f;
+		m_flRealDeadline = Plat_FloatTime() + 240.0f;
 		m_nPass = m_nFail = 0;
 	}
 
@@ -204,6 +215,92 @@ private:
 		}
 	}
 
+	// Scenarios after the walk test: the bot is placed, then driven by these
+	// fields every frame, and what the checks need is recorded.
+	void PlaceBot( const Vector &vecOrigin, const QAngle &angles, const Vector &vecVelocity )
+	{
+		CBasePlayer *pBot = ToBasePlayer( m_hBot );
+		if ( !pBot )
+			return;
+		pBot->SetMoveType( MOVETYPE_WALK );
+		pBot->RemoveSolidFlags( FSOLID_NOT_SOLID );
+		pBot->Teleport( &vecOrigin, &angles, &vecVelocity );
+		pBot->SnapEyeAngles( angles );
+		pBot->SetGroundEntity( NULL );
+		m_angBot = angles;
+		m_flBotForward = 0.0f;
+		m_flScenarioClosestF = m_flScenarioClosestW = FLT_MAX;
+		m_nSnapsBefore = CHL2MPPortal::CountTeleports( pBot );
+	}
+
+	// Player origin standing on the floor below vecPoint.
+	Vector FloorBelow( const Vector &vecPoint )
+	{
+		trace_t tr;
+		UTIL_TraceHull( vecPoint + Vector( 0, 0, 32 ), vecPoint - Vector( 0, 0, 160 ), VEC_HULL_MIN, VEC_HULL_MAX, MASK_PLAYERSOLID, m_hBot, COLLISION_GROUP_PLAYER_MOVEMENT, &tr );
+		return tr.endpos;
+	}
+
+	int BotSnaps()
+	{
+		return CHL2MPPortal::CountTeleports( m_hBot ) - m_nSnapsBefore;
+	}
+
+	void DriveScenario( CBasePlayer *pBot )
+	{
+		CUserCmd cmd;
+		cmd.command_number = ++m_nBotCommand;
+		cmd.tick_count = gpGlobals->tickcount;
+		cmd.viewangles = m_angBot;
+		cmd.forwardmove = m_flBotForward;
+		cmd.buttons = ( m_flBotForward > 0.0f ) ? IN_FORWARD : 0;
+		if ( gpGlobals->curtime < m_flAttackUntil )
+			cmd.buttons |= IN_ATTACK;
+		pBot->ProcessUsercmds( &cmd, 1, 1, 0, false );
+
+		Vector vecCenter = pBot->WorldSpaceCenter();
+		if ( m_hFloor )
+			m_flScenarioClosestF = MIN( m_flScenarioClosestF, ( vecCenter - m_hFloor->GetAbsOrigin() ).Length() );
+		if ( m_hWall )
+			m_flScenarioClosestW = MIN( m_flScenarioClosestW, ( vecCenter - m_hWall->GetAbsOrigin() ).Length() );
+
+		if ( m_bTrackExitSpeed && m_flExitSpeed < 0.0f && m_hFloor && ( vecCenter - m_hFloor->GetAbsOrigin() ).Length() < 100.0f )
+		{
+			m_flExitSpeed = pBot->GetAbsVelocity().Length();
+		}
+
+		if ( m_flLoopStart > 0.0f )
+		{
+			float flZ = pBot->GetAbsOrigin().z;
+			float flVz = pBot->GetAbsVelocity().z;
+			if ( m_flLastVz > 0.0f && flVz <= 0.0f )
+			{
+				Msg( "PORTALTEST info loop apex t=%.2f z=%.1f\n", gpGlobals->curtime - m_flLoopStart, flZ - m_hFloor->GetAbsOrigin().z );
+			}
+			// Height change velocity doesn't explain (a nudge, not a fall).
+			float flDt = gpGlobals->curtime - m_flLastTime;
+			if ( m_flLastTime > 0.0f && flDt > 0.0f )
+			{
+				float flErr = ( flZ - m_flLastZ ) - 0.5f * ( flVz + m_flLastVz ) * flDt;
+				if ( fabs( flErr ) > 1.0f )
+				{
+					Msg( "PORTALTEST info loop jump t=%.3f z %.1f -> %.1f vz %.0f -> %.0f (unexplained %.1f)\n",
+						gpGlobals->curtime, m_flLastZ, flZ, m_flLastVz, flVz, flErr );
+				}
+			}
+			m_flLastZ = flZ;
+			m_flLastTime = gpGlobals->curtime;
+			m_flLastVz = flVz;
+			// Skip the first 3 s (it speeds up to the minimum exit speed), then
+			// compare the next 3 s with the 3 after: a loop must not gain height.
+			float flT = gpGlobals->curtime - m_flLoopStart;
+			if ( flT >= 3.0f && flT < 6.0f )
+				m_flPeakEarly = MAX( m_flPeakEarly, flZ );
+			else if ( flT >= 6.0f )
+				m_flPeakLate = MAX( m_flPeakLate, flZ );
+		}
+	}
+
 	// Walk the bot forward along m_angBot every frame and track how close it
 	// gets to the exit portal.
 	void DriveBot()
@@ -211,6 +308,12 @@ private:
 		CBasePlayer *pBot = ToBasePlayer( m_hBot );
 		if ( !pBot )
 			return;
+
+		if ( m_bScenario )
+		{
+			DriveScenario( pBot );
+			return;
+		}
 
 		CUserCmd cmd;
 		cmd.command_number = ++m_nBotCommand;
@@ -468,6 +571,196 @@ private:
 				"held=%d box_teleported=%d", m_bHeldAfterTransit, m_hHeldBox ? CHL2MPPortal::WasTeleported( m_hHeldBox ) : 0 );
 
 			m_bBotWalk = false;
+			CHL2_Player *pBot = static_cast<CHL2_Player *>( ToBasePlayer( m_hBot ) );
+			pBot->ForceDropOfCarriedPhysObjects( NULL );
+			if ( m_hHeldBox )
+				UTIL_Remove( m_hHeldBox );
+
+			// Bug reports: snapping when coming in at an angle / off-center.
+			// Start beside the hole's center line (more than the hull's room
+			// in it) and walk in turned a bit further away: the funnel has to
+			// line it up, and it must go through without a server snap.
+			m_bScenario = true;
+			Vector vecRight;
+			m_hWall->GetPortalVectors( NULL, &vecRight, NULL );
+			Vector vecStart = FloorBelow( m_hWall->GetAbsOrigin() + m_vecWallNormal * 96.0f + vecRight * 22.0f );
+			QAngle angIn;
+			VectorAngles( -m_vecWallNormal - vecRight * 0.27f, angIn );		// ~15 degrees away from the center
+			angIn.x = 0;
+			PlaceBot( vecStart, angIn, vec3_origin );
+			m_flBotForward = 200.0f;
+			Wait( 2.5f );
+			return;
+		}
+
+		case 6:
+		{
+			Result( "angled_offcenter_walk_in_no_snap", m_flScenarioClosestF < 80.0f && BotSnaps() == 0,
+				"closest_to_exit=%.0f snaps=%d", m_flScenarioClosestF, BotSnaps() );
+
+			// Bug report: speed lost going through fast. Fling into the wall
+			// portal at 900 u/s; it must come out of the floor portal still fast.
+			Vector vecStart = m_hWall->GetAbsOrigin() + m_vecWallNormal * 120.0f - Vector( 0, 0, 36 );
+			QAngle angIn;
+			VectorAngles( -m_vecWallNormal, angIn );
+			PlaceBot( vecStart, angIn, -m_vecWallNormal * 900.0f );
+			m_flExitSpeed = -1.0f;
+			m_bTrackExitSpeed = true;
+			Wait( 1.5f );
+			return;
+		}
+
+		case 7:
+		{
+			m_bTrackExitSpeed = false;
+			Result( "high_speed_keeps_speed", m_flExitSpeed >= 700.0f && BotSnaps() == 0, "exit_speed=%.0f snaps=%d", m_flExitSpeed, BotSnaps() );
+
+			// Bug report: a held prop near a portal snaps back and forth. Stand
+			// so the hold point is just past the plane, hold still for 3 s.
+			QAngle angIn;
+			VectorAngles( -m_vecWallNormal, angIn );
+			PlaceBot( FloorBelow( m_hWall->GetAbsOrigin() + m_vecWallNormal * 58.0f ), angIn, vec3_origin );
+			CBasePlayer *pBot = ToBasePlayer( m_hBot );
+			CBaseEntity *pBox = CreateEntityByName( "prop_physics" );
+			pBox->SetAbsOrigin( pBot->EyePosition() - m_vecWallNormal * 30.0f );
+			pBox->KeyValue( "model", "models/props_junk/cardboard_box001a.mdl" );
+			pBox->Precache();
+			DispatchSpawn( pBox );
+			pBox->Activate();
+			PlayerPickupObject( pBot, pBox );
+			m_hHeldBox = pBox;
+			m_nBoxTeleportsBefore = CHL2MPPortal::CountTeleports( pBox );
+			Wait( 3.0f );
+			return;
+		}
+
+		case 8:
+		{
+			CHL2_Player *pBot = static_cast<CHL2_Player *>( ToBasePlayer( m_hBot ) );
+			int nBoxTeleports = m_hHeldBox ? CHL2MPPortal::CountTeleports( m_hHeldBox ) - m_nBoxTeleportsBefore : -1;
+			bool bHeld = m_hHeldBox && pBot->IsHoldingEntity( m_hHeldBox );
+			Result( "held_prop_no_flip_flop", bHeld && nBoxTeleports >= 0 && nBoxTeleports <= 1, "held=%d box_teleports=%d", bHeld, nBoxTeleports );
+			pBot->ForceDropOfCarriedPhysObjects( NULL );
+			if ( m_hHeldBox )
+				UTIL_Remove( m_hHeldBox );
+
+			// Bug report: the stunstick doesn't hit through a portal. Swing a
+			// crowbar into the wall portal at a crate held still above the
+			// floor portal (on the other side).
+			CBaseCombatWeapon *pCrowbar = pBot->Weapon_OwnsThisType( "weapon_crowbar" );
+			if ( !pCrowbar )
+				pCrowbar = static_cast<CBaseCombatWeapon *>( pBot->GiveNamedItem( "weapon_crowbar" ) );
+			if ( pCrowbar )
+				pBot->Weapon_Switch( pCrowbar );
+
+			QAngle angIn;
+			VectorAngles( -m_vecWallNormal, angIn );
+			PlaceBot( FloorBelow( m_hWall->GetAbsOrigin() + m_vecWallNormal * 30.0f ), angIn, vec3_origin );
+
+			CBaseEntity *pCrate = CreateEntityByName( "prop_physics" );
+			pCrate->SetAbsOrigin( m_hFloor->GetAbsOrigin() + Vector( 0, 0, 30 ) );
+			pCrate->KeyValue( "model", "models/props_junk/wood_crate001a.mdl" );
+			pCrate->KeyValue( "health", "100" );
+			pCrate->KeyValue( "spawnflags", "8" );	// motion disabled: stays over the portal
+			pCrate->Precache();
+			DispatchSpawn( pCrate );
+			pCrate->Activate();
+			m_hCrate = pCrate;
+			m_iCrateHealth = pCrate->GetHealth();
+			Wait( 1.5f );	// let the crowbar finish deploying
+			return;
+		}
+
+		case 9:
+		{
+			CBasePlayer *pBot = ToBasePlayer( m_hBot );
+			Msg( "PORTALTEST info swinging %s\n", pBot->GetActiveWeapon() ? pBot->GetActiveWeapon()->GetClassname() : "nothing" );
+			m_flAttackUntil = gpGlobals->curtime + 1.0f;
+			Wait( 1.5f );
+			return;
+		}
+
+		case 10:
+		{
+			int iHealth = m_hCrate ? m_hCrate->GetHealth() : -1;
+			Result( "melee_through_portal", !m_hCrate || iHealth < m_iCrateHealth, "crate_health %d -> %d", m_iCrateHealth, iHealth );
+			if ( m_hCrate )
+				UTIL_Remove( m_hCrate );
+
+			// Bug report: standing on the edge of a floor portal snaps you back
+			// and forth. Center well outside the hole, part of the hull over it:
+			// must just stand there.
+			Vector vecRight;
+			m_hFloor->GetPortalVectors( NULL, &vecRight, NULL );
+			PlaceBot( m_hFloor->GetAbsOrigin() + vecRight * 46.0f + Vector( 0, 0, 1 ), m_angBot, vec3_origin );
+			m_vecEdgeStart = ToBasePlayer( m_hBot )->GetAbsOrigin();
+			Wait( 2.0f );
+			return;
+		}
+
+		case 11:
+		{
+			float flMoved = ( ToBasePlayer( m_hBot )->GetAbsOrigin() - m_vecEdgeStart ).Length();
+			Result( "floor_edge_stands_still", flMoved < 4.0f && BotSnaps() == 0, "moved=%.1f snaps=%d", flMoved, BotSnaps() );
+
+			// Mostly over the hole, a little off: funneled in, through to the
+			// wall portal, no snap.
+			Vector vecRight;
+			m_hFloor->GetPortalVectors( NULL, &vecRight, NULL );
+			PlaceBot( m_hFloor->GetAbsOrigin() + vecRight * 24.0f + Vector( 0, 0, 1 ), m_angBot, vec3_origin );
+			Wait( 2.0f );
+			return;
+		}
+
+		case 12:
+		{
+			Result( "floor_portal_funnels_in", m_flScenarioClosestW < 100.0f && BotSnaps() == 0, "closest_to_other=%.0f snaps=%d", m_flScenarioClosestW, BotSnaps() );
+
+			// Bug report: two floor portals: you go higher and higher. Move the
+			// wall portal onto the floor nearby and drop the bot into one.
+			Vector vecRight, vecUp;
+			m_hFloor->GetPortalVectors( NULL, &vecRight, &vecUp );
+			bool bPlaced = false;
+			Vector vecDirs[4] = { vecRight, -vecRight, vecUp, -vecUp };
+			for ( int i = 0; i < 4 && !bPlaced; i++ )
+			{
+				for ( float flDist = 160.0f; flDist <= 280.0f && !bPlaced; flDist += 60.0f )
+				{
+					Vector vecSpot = m_hFloor->GetAbsOrigin() + vecDirs[i] * flDist;
+					trace_t tr;
+					UTIL_TraceLine( vecSpot + Vector( 0, 0, 64 ), vecSpot - Vector( 0, 0, 64 ), MASK_SOLID_BRUSHONLY, NULL, COLLISION_GROUP_NONE, &tr );
+					if ( tr.fraction < 1.0f && !tr.startsolid && tr.plane.normal.z > 0.99f && fabs( tr.endpos.z - m_hFloor->GetAbsOrigin().z ) < 16.0f )
+					{
+						bPlaced = m_hWall->PlaceOnSurface( tr.endpos, Vector( 0, 0, 1 ), Vector( 1, 0, 0 ) );
+					}
+				}
+			}
+			if ( !bPlaced )
+			{
+				Result( "floor_loop_no_height_gain", false, "no second floor spot" );
+				Finish();
+				return;
+			}
+			Vector v = m_hWall->GetAbsOrigin();
+			Msg( "PORTALTEST info second floor portal at (%.0f %.0f %.0f)\n", v.x, v.y, v.z );
+
+			PlaceBot( m_hFloor->GetAbsOrigin() + Vector( 0, 0, 1 ), m_angBot, vec3_origin );
+			m_flLoopStart = gpGlobals->curtime;
+			m_flLastVz = m_flLastZ = m_flLastTime = 0.0f;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
+			m_flPeakEarly = m_flPeakLate = -FLT_MAX;
+			Wait( 9.0f );
+			return;
+		}
+
+		case 13:
+		{
+			m_flLoopStart = -1.0f;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
+			float flFloor = m_hFloor->GetAbsOrigin().z;
+			Result( "floor_loop_no_height_gain", m_flPeakLate <= m_flPeakEarly + 4.0f && BotSnaps() == 0,
+				"peak_3_to_6s=%.1f peak_6_to_9s=%.1f (above floor) snaps=%d", m_flPeakEarly - flFloor, m_flPeakLate - flFloor, BotSnaps() );
+
 			m_hBot = NULL;
 			Finish();
 			return;
@@ -492,7 +785,21 @@ private:
 	bool	m_bSnapFirst;
 	bool	m_bRocketThrough;
 	bool	m_bHeldAfterTransit;
-	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan, m_hHeldBox;
+	EHANDLE	m_hProp, m_hHeldProp, m_hRocket, m_hCan, m_hHeldBox, m_hCrate;
+
+	// Scenarios
+	bool	m_bScenario;
+	float	m_flBotForward;
+	float	m_flAttackUntil;
+	float	m_flExitSpeed;
+	bool	m_bTrackExitSpeed;
+	float	m_flLoopStart;
+	float	m_flPeakEarly, m_flPeakLate;
+	float	m_flLastVz, m_flLastZ, m_flLastTime;
+	float	m_flScenarioClosestF, m_flScenarioClosestW;
+	int		m_nSnapsBefore, m_nBoxTeleportsBefore;
+	int		m_iCrateHealth;
+	Vector	m_vecEdgeStart;
 };
 
 static CHL2MPPortalSelfTest g_HL2MPPortalSelfTest;
