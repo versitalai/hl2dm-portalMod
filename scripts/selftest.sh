@@ -34,7 +34,10 @@ else
 fi
 echo ">> server exited ($?)"
 
-grep -E "PORTALTEST|SIGSEGV|Segmentation|crash|Couldn't|Failed to load|error|^#[0-9]" "$LOG" | head -80 || true
+grep -E "PORTALTEST|SIGSEGV|Segmentation|crash|Couldn't|Failed to load|error|^#[0-9]" "$LOG" | grep -vE "PORTALTEST (move|info loop)" | head -80 || true
+# Movement diagnostics from the floor-portal loop (sv_portal_debug_moves).
+echo ">> floor loop trace:"
+grep -E "PORTALTEST (move|info loop)" "$LOG" | head -60 || true
 
 # Engine console output (-condebug).
 CONLOG="$SRCDS/hl2dm_portal/console.log"

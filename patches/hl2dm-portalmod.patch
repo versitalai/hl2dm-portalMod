@@ -961,7 +961,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..2d9c611 100644
+index e54f63d..e4ccb14 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -979,7 +979,7 @@ index e54f63d..2d9c611 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +537,196 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +537,209 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1017,6 +1017,10 @@ index e54f63d..2d9c611 100644
 +// Floor portals launch you at least this fast, so walking into a wall portal
 +// whose partner is on the floor doesn't drop you straight back in.
 +#define PORTAL_MIN_UPWARD_EXIT_SPEED	250.0f
++
++#ifdef GAME_DLL
++static ConVar sv_portal_debug_moves( "sv_portal_debug_moves", "0", FCVAR_NONE, "Log each player portal transition to the console." );
++#endif
 +
 +void CHL2GameMovement::PlayerMove( void )
 +{
@@ -1136,6 +1140,15 @@ index e54f63d..2d9c611 100644
 +	VectorAngles( matToLinked.VMul3x3( vecForward ), angView );
 +	angView.x = clamp( AngleNormalize( angView.x ), -89.0f, 89.0f );
 +	angView.z = 0.0f;
++
++#ifdef GAME_DLL
++	if ( sv_portal_debug_moves.GetBool() )
++	{
++		Msg( "PORTALTEST move t=%.3f eye %.1f -> %.1f cross %.2f z %.1f -> %.1f (wanted %.1f) vz %.0f -> %.0f\n",
++			gpGlobals->curtime, flEyeStart, flEyeEnd, flCross, mv->GetAbsOrigin().z, vecOrigin.z, vecWanted.z,
++			mv->m_vecVelocity.z, vecVelocity.z );
++	}
++#endif
 +
 +	mv->SetAbsOrigin( vecOrigin );
 +	mv->m_vecVelocity = vecVelocity;

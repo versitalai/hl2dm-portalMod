@@ -45,6 +45,7 @@ public:
 		m_flLoopStart = -1.0f;
 		m_flPeakEarly = m_flPeakLate = -FLT_MAX;
 		m_flLastVz = 0.0f;
+		m_flLastZ = m_flLastTime = 0.0f;
 		m_flScenarioClosestF = m_flScenarioClosestW = FLT_MAX;
 		m_nSnapsBefore = m_nBoxTeleportsBefore = 0;
 	}
@@ -276,6 +277,19 @@ private:
 			{
 				Msg( "PORTALTEST info loop apex t=%.2f z=%.1f\n", gpGlobals->curtime - m_flLoopStart, flZ - m_hFloor->GetAbsOrigin().z );
 			}
+			// Height change velocity doesn't explain (a nudge, not a fall).
+			float flDt = gpGlobals->curtime - m_flLastTime;
+			if ( m_flLastTime > 0.0f && flDt > 0.0f )
+			{
+				float flErr = ( flZ - m_flLastZ ) - 0.5f * ( flVz + m_flLastVz ) * flDt;
+				if ( fabs( flErr ) > 1.0f )
+				{
+					Msg( "PORTALTEST info loop jump t=%.3f z %.1f -> %.1f vz %.0f -> %.0f (unexplained %.1f)\n",
+						gpGlobals->curtime, m_flLastZ, flZ, m_flLastVz, flVz, flErr );
+				}
+			}
+			m_flLastZ = flZ;
+			m_flLastTime = gpGlobals->curtime;
 			m_flLastVz = flVz;
 			// Skip the first 3 s (it speeds up to the minimum exit speed), then
 			// compare the next 3 s with the 3 after: a loop must not gain height.
@@ -732,6 +746,8 @@ private:
 
 			PlaceBot( m_hFloor->GetAbsOrigin() + Vector( 0, 0, 1 ), m_angBot, vec3_origin );
 			m_flLoopStart = gpGlobals->curtime;
+			m_flLastVz = m_flLastZ = m_flLastTime = 0.0f;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
 			m_flPeakEarly = m_flPeakLate = -FLT_MAX;
 			Wait( 9.0f );
 			return;
@@ -740,6 +756,7 @@ private:
 		case 13:
 		{
 			m_flLoopStart = -1.0f;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
 			float flFloor = m_hFloor->GetAbsOrigin().z;
 			Result( "floor_loop_no_height_gain", m_flPeakLate <= m_flPeakEarly + 4.0f && BotSnaps() == 0,
 				"peak_3_to_6s=%.1f peak_6_to_9s=%.1f (above floor) snaps=%d", m_flPeakEarly - flFloor, m_flPeakLate - flFloor, BotSnaps() );
@@ -778,7 +795,7 @@ private:
 	bool	m_bTrackExitSpeed;
 	float	m_flLoopStart;
 	float	m_flPeakEarly, m_flPeakLate;
-	float	m_flLastVz;
+	float	m_flLastVz, m_flLastZ, m_flLastTime;
 	float	m_flScenarioClosestF, m_flScenarioClosestW;
 	int		m_nSnapsBefore, m_nBoxTeleportsBefore;
 	int		m_iCrateHealth;
