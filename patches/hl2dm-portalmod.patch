@@ -961,15 +961,16 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..5d3b749 100644
+index e54f63d..2d9c611 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
-@@ -9,6 +9,13 @@
+@@ -9,6 +9,14 @@
  #include "utlrbtree.h"
  #include "hl2_shareddefs.h"
  
 +#ifdef HL2MP
 +#include "hl2mp_portal.h"
++#include "movevars_shared.h"
 +#ifdef CLIENT_DLL
 +#include "prediction.h"
 +#endif
@@ -978,7 +979,7 @@ index e54f63d..5d3b749 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +536,183 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +537,196 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1071,14 +1072,7 @@ index e54f63d..5d3b749 100644
 +
 +	Vector vecVelocity = matToLinked.VMul3x3( mv->m_vecVelocity );
 +	Vector vecExitNormal = pLinked->GetSurfaceNormal();
-+	if ( vecExitNormal.z > 0.7f )
-+	{
-+		float flOut = DotProduct( vecVelocity, vecExitNormal );
-+		if ( flOut < PORTAL_MIN_UPWARD_EXIT_SPEED )
-+		{
-+			vecVelocity += vecExitNormal * ( PORTAL_MIN_UPWARD_EXIT_SPEED - flOut );
-+		}
-+	}
++	Vector vecWanted = vecOrigin + vecRestOfMove;
 +
 +	// If the hull can't sit there (doesn't fit the exit hole), move it out of
 +	// the exit only as far as it takes, so the camera barely moves.
@@ -1113,6 +1107,26 @@ index e54f63d..5d3b749 100644
 +			}
 +		}
 +		vecOrigin = vecOut;
++	}
++
++	// Being pushed up out of the exit must not add energy: take the height
++	// it gained out of the outward speed, or two floor portals launch you a
++	// little higher every loop.
++	float flRise = vecOrigin.z - vecWanted.z;
++	float flOutSpeed = DotProduct( vecVelocity, vecExitNormal );
++	if ( flRise > 0.0f && flOutSpeed > 0.0f )
++	{
++		float flNewOut = sqrtf( MAX( flOutSpeed * flOutSpeed - 2.0f * GetCurrentGravity() * flRise, 0.0f ) );
++		vecVelocity += vecExitNormal * ( flNewOut - flOutSpeed );
++	}
++
++	if ( vecExitNormal.z > 0.7f )
++	{
++		float flOut = DotProduct( vecVelocity, vecExitNormal );
++		if ( flOut < PORTAL_MIN_UPWARD_EXIT_SPEED )
++		{
++			vecVelocity += vecExitNormal * ( PORTAL_MIN_UPWARD_EXIT_SPEED - flOut );
++		}
 +	}
 +
 +	// View turns with the portal; roll dropped.

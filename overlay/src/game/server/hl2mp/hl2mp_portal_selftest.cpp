@@ -44,6 +44,7 @@ public:
 		m_bTrackExitSpeed = false;
 		m_flLoopStart = -1.0f;
 		m_flPeakEarly = m_flPeakLate = -FLT_MAX;
+		m_flLastVz = 0.0f;
 		m_flScenarioClosestF = m_flScenarioClosestW = FLT_MAX;
 		m_nSnapsBefore = m_nBoxTeleportsBefore = 0;
 	}
@@ -270,6 +271,12 @@ private:
 		if ( m_flLoopStart > 0.0f )
 		{
 			float flZ = pBot->GetAbsOrigin().z;
+			float flVz = pBot->GetAbsVelocity().z;
+			if ( m_flLastVz > 0.0f && flVz <= 0.0f )
+			{
+				Msg( "PORTALTEST info loop apex t=%.2f z=%.1f\n", gpGlobals->curtime - m_flLoopStart, flZ - m_hFloor->GetAbsOrigin().z );
+			}
+			m_flLastVz = flVz;
 			// Skip the first 3 s (it speeds up to the minimum exit speed), then
 			// compare the next 3 s with the 3 after: a loop must not gain height.
 			float flT = gpGlobals->curtime - m_flLoopStart;
@@ -771,6 +778,7 @@ private:
 	bool	m_bTrackExitSpeed;
 	float	m_flLoopStart;
 	float	m_flPeakEarly, m_flPeakLate;
+	float	m_flLastVz;
 	float	m_flScenarioClosestF, m_flScenarioClosestW;
 	int		m_nSnapsBefore, m_nBoxTeleportsBefore;
 	int		m_iCrateHealth;
