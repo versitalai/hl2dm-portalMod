@@ -39,7 +39,7 @@ grep -E "PORTALTEST|SIGSEGV|Segmentation|crash|Couldn't|Failed to load|error|^#[
 echo ">> floor loop trace:"
 grep -E "PORTALTEST (move|info loop)" "$LOG" | head -60 || true
 echo ">> fast fall trace:"
-grep -E "PORTALTEST (tick|move|info walk-off)" "$LOG" | head -120 || true
+grep -E "PORTALTEST (tick|move)" "$LOG" | head -75 || true
 echo ">> held box trace:"
 grep -E "PORTALTEST info held box" "$LOG" | head -14 || true
 
