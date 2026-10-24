@@ -108,6 +108,7 @@ public:
 
 	// Recent teleports, newest last (for sv_portal_selftest and debugging).
 	static bool		WasTeleported( CBaseEntity *pEntity );
+	static int		CountTeleports( CBaseEntity *pEntity );
 #endif
 
 #ifdef CLIENT_DLL
@@ -124,6 +125,13 @@ public:
 	// Valid while m_iViewStamp[d] == g_iHL2MPPortalViewStamp[d].
 	int				m_iViewSlot[HL2MP_PORTAL_MAX_DEPTH];
 	int				m_iViewStamp[HL2MP_PORTAL_MAX_DEPTH];
+
+private:
+	// How deep the tunnel behind the surface can go without poking out of the
+	// back of a thin wall; measured once per placement.
+	float			GetTunnelDepth();
+	float			m_flTunnelDepth;
+	int				m_nTunnelVersion;
 #endif
 
 private:
@@ -164,6 +172,12 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 // on the exit side. Returns false if no portal is involved (do a normal trace).
 bool UTIL_HL2MPPortal_TracePlayerHull( const Vector &vecStart, const Vector &vecEnd, const Vector &vecMins, const Vector &vecMaxs,
 	unsigned int mask, IHandleEntity *pIgnore, int collisionGroup, trace_t &pm );
+
+// Funneling: a player heading into an axis-aligned portal a little off-center
+// is moved sideways (this tick's share, from vecOrigin) so the hull lines up
+// with the hole instead of catching the rim, like Portal's funneling. Zero if
+// no portal needs it.
+Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocity, float flFrameTime );
 
 // The portal whose plane the eye crossed while moving from vecEyeStart to
 // vecEye (with the hull inside its hole), or NULL.
