@@ -216,6 +216,13 @@ void UTIL_HL2MPPortal_CheckServerVersion();
 #endif
 
 #ifdef GAME_DLL
+// A portal trip can put a player in another part of the map in one tick, and
+// the soundscape (ambient loops, announcements) restarts. Hold the current one
+// for sv_portal_soundscape_hold seconds after a trip, so going back and forth
+// doesn't restart it.
+void UTIL_HL2MPPortal_NotePlayerTransit( CBasePlayer *pPlayer );
+bool UTIL_HL2MPPortal_HoldSoundscape( CBasePlayer *pPlayer );
+
 class CTakeDamageInfo;
 // Explosions reach through portals: for each open portal the blast can see,
 // the rest of its radius goes off again just out of the linked portal.

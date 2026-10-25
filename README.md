@@ -114,6 +114,7 @@ saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
 | `sv_portal_debug` | 0 | server (cheat) | Draw detection volumes, placement traces, exit boxes |
 | `sv_portal_debug_moves` | 0 | server | Log each player portal transition (eye depth, height and speed before/after) |
 | `cl_portal_view_ease` | 0.2 | client | Seconds the camera takes to settle after a portal turns your view (0 = instant) |
+| `sv_portal_soundscape_hold` | 2 | server | Seconds a player's ambient soundscape is kept after a portal trip (stops restarts) |
 | `sv_portal_mod_version` | (version.txt) | server, replicated | Release the server runs; clients on another release get a chat warning |
 
 ## Dedicated server

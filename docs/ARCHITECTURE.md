@@ -129,6 +129,12 @@ hole is within the radius, in front of it and in sight (brush trace), the blast 
 linked portal with radius `R - d` and damage `D * (R - d) / R` (`d` = distance to the nearest point of the hole), so
 falloff over the whole path is the same. One hop (it calls the base `CGameRules::RadiusDamage`).
 
+## Soundscapes (server)
+
+`CEnvSoundscape::UpdateForPlayer` (HL2MP) doesn't switch a player's soundscape within `sv_portal_soundscape_hold`
+seconds of their last portal trip (`UTIL_HL2MPPortal_NotePlayerTransit`, called by the movement transition), so a
+trip into another area and back doesn't restart ambient loops and announcements.
+
 ## Versions and updates
 
 `scripts/package.sh` writes the release tag to `hl2dm_portal/version.txt`. The server reads it into the replicated

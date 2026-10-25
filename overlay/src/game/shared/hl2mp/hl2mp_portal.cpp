@@ -1358,6 +1358,27 @@ void CHL2MPPortal::AddPortalsToPVS( unsigned char *pvs, int pvssize )
 	}
 }
 
+static ConVar sv_portal_soundscape_hold( "sv_portal_soundscape_hold", "2", FCVAR_NONE, "Seconds a player's soundscape stays as it was after going through a portal (0 = switch right away)." );
+static float s_flPlayerTransitTime[MAX_PLAYERS + 1];
+
+void UTIL_HL2MPPortal_NotePlayerTransit( CBasePlayer *pPlayer )
+{
+	int iIndex = pPlayer ? pPlayer->entindex() : 0;
+	if ( iIndex > 0 && iIndex <= MAX_PLAYERS )
+	{
+		s_flPlayerTransitTime[iIndex] = gpGlobals->curtime;
+	}
+}
+
+bool UTIL_HL2MPPortal_HoldSoundscape( CBasePlayer *pPlayer )
+{
+	int iIndex = pPlayer ? pPlayer->entindex() : 0;
+	if ( iIndex <= 0 || iIndex > MAX_PLAYERS || s_flPlayerTransitTime[iIndex] <= 0.0f )
+		return false;
+	float flSince = gpGlobals->curtime - s_flPlayerTransitTime[iIndex];
+	return flSince >= 0.0f && flSince < sv_portal_soundscape_hold.GetFloat();
+}
+
 extern ConVar sv_portal_debug_moves;
 
 void UTIL_HL2MPPortal_RadiusDamage( const CTakeDamageInfo &info, const Vector &vecSrc, float flRadius, int iClassIgnore, CBaseEntity *pEntityIgnore )

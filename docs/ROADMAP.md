@@ -24,8 +24,8 @@
 - **Explosion effects** (fireball, sound) stay on the blast's side; the damage and its push go through.
 - **Blocked-exit check uses one hull test** centered on the exit hole: a hole blocked only off-center still lets you in,
   then the exit push-out deals with it.
-- **Soundscapes restart** when you go through into another area of the map (e.g. dm_lockdown's announcer), like
-  walking between areas, just instant. A short delay before the soundscape switches would hide it.
+- **Soundscapes switch late after a portal trip**: the old one is kept for `sv_portal_soundscape_hold` seconds (so
+  quick back-and-forth trips don't restart it), then the new area's starts as usual.
 
 ## Ideas / next steps
 1. Play-test pass: tune `sv_portal_lookahead`, exit gap, placement step; check prediction feel through portals.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.3 — unreleased
+## 0.4.3 — 2026-10-25
 
 From the v0.4.2 play-test. Each fix except the settings window and the camera ease has a matching self-test check.
 
@@ -33,6 +33,9 @@ From the v0.4.2 play-test. Each fix except the settings window and the camera ea
   and only if a newer release is out it downloads it and runs its installer (no admin). `update.bat` checks by hand;
   `no_auto_update.txt` turns the automatic check off. Releases carry `version.txt`.
 - Servers publish their release in `sv_portal_mod_version`; joining with a different release shows a chat warning.
+- **Ambient sound no longer restarts on portal trips** (dm_lockdown's announcer replaying): for
+  `sv_portal_soundscape_hold` seconds (default 2) after going through, the player's soundscape stays as it was. Going
+  back within that time restarts nothing; staying switches as usual afterwards.
 - Self-test: held prop comes back, walking off a floor portal's edge, 1200 u/s falls (3 offsets), blocked exit acts
   solid, explosion through a portal. CI tests `update.bat` updating an old install to the latest release.
 

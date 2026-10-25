@@ -969,6 +969,33 @@ index 8427634..56cdae2 100644
  				$File	"$SRCDIR\game\shared\hl2mp\weapon_rpg.cpp"
  				$File	"$SRCDIR\game\shared\hl2mp\weapon_rpg.h"
  				$File	"$SRCDIR\game\shared\hl2mp\weapon_shotgun.cpp"
+diff --git a/src/game/server/soundscape.cpp b/src/game/server/soundscape.cpp
+index 62b986c..9653f93 100644
+--- a/src/game/server/soundscape.cpp
++++ b/src/game/server/soundscape.cpp
+@@ -10,6 +10,9 @@
+ #include "soundscape_system.h"
+ #include "triggers.h"
+ #include "saverestore_utlvector.h"
++#ifdef HL2MP
++#include "hl2mp_portal.h"
++#endif
+ 
+ // memdbgon must be the last include file in a .cpp file!!!
+ #include "tier0/memdbgon.h"
+@@ -284,6 +287,12 @@ void CEnvSoundscape::UpdateForPlayer( ss_update_t &update )
+ 			update.traceCount++;
+ 			UTIL_TraceLine( target, update.playerPosition, MASK_SOLID_BRUSHONLY|MASK_WATER, update.pPlayer, COLLISION_GROUP_NONE, &tr );
+ 
++#ifdef HL2MP
++			// Just went through a portal: keep the soundscape it had (see
++			// UTIL_HL2MPPortal_HoldSoundscape).
++			if ( UTIL_HL2MPPortal_HoldSoundscape( update.pPlayer ) )
++				return;
++#endif
+ 			if ( tr.fraction == 1 && !tr.startsolid )
+ 			{
+ 				audioparams_t &audio = update.pPlayer->GetAudioParams();
 diff --git a/src/game/shared/baseentity_shared.cpp b/src/game/shared/baseentity_shared.cpp
 index bf44dc1..acfd868 100644
 --- a/src/game/shared/baseentity_shared.cpp
@@ -1044,7 +1071,7 @@ index bf44dc1..acfd868 100644
  #endif
  
 diff --git a/src/game/shared/hl2/hl_gamemovement.cpp b/src/game/shared/hl2/hl_gamemovement.cpp
-index e54f63d..8464341 100644
+index e54f63d..1653c5e 100644
 --- a/src/game/shared/hl2/hl_gamemovement.cpp
 +++ b/src/game/shared/hl2/hl_gamemovement.cpp
 @@ -9,6 +9,14 @@
@@ -1062,7 +1089,7 @@ index e54f63d..8464341 100644
  #ifdef HL2MP
  #ifdef CLIENT_DLL
  #include "hl2mp/c_hl2mp_player.h"
-@@ -529,6 +537,293 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
+@@ -529,6 +537,295 @@ void CHL2GameMovement::ProcessMovement( CBasePlayer *pPlayer, CMoveData *pMove )
  	BaseClass::ProcessMovement( pPlayer, pMove );
  }
  
@@ -1349,6 +1376,8 @@ index e54f63d..8464341 100644
 +	// Whatever they're holding stays held from the other side.
 +	extern void PhysCannon_HolderWentThroughPortal( CBasePlayer *pPlayer, CHL2MPPortal *pPortal );
 +	PhysCannon_HolderWentThroughPortal( player, pPortal );
++
++	UTIL_HL2MPPortal_NotePlayerTransit( player );
 +#endif
 +}
 +#endif // HL2MP
