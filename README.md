@@ -18,6 +18,11 @@ Anything that moves goes through them. You see through them live.
    Or copy the `hl2dm_portal` folder into Steam's `steamapps/sourcemods/` yourself.
 4. Launch it from the desktop shortcut, or restart Steam and launch **HL2DM Portal** from your Library.
 
+**Updates (Windows):** the desktop shortcuts check for a newer release every time you start the game and install it
+by themselves (one quick request; a download only when there's a new version). `hl2dm_portal\update.bat` checks by
+hand; a file named `no_auto_update.txt` next to it turns the automatic check off. Joining a server that runs another
+release shows a warning in chat.
+
 Normal HL2DM is untouched: play regular servers with HL2DM, portal servers with HL2DM Portal.
 Servers can't install the mod for players (a server can send maps and models, never code).
 
@@ -40,7 +45,8 @@ From source on Linux, one command does it all (fetch SDK, build, package, instal
 
 Props you're holding (gravity gun or `+use`) stay held through portals, from either side. Walk into a wall or floor
 portal and you go through in one smooth move (no snap) when your eye crosses it; a little off-center, you slide into line
-with the hole on the way in (funneling). Melee weapons (crowbar, stunstick) reach through portals too. Props with
+with the hole on the way in (funneling). Melee weapons (crowbar, stunstick) reach through portals too, and so do
+explosions. A portal whose exit is blocked (something solid right in front of the other one) is just a wall or floor. Props with
 motion disabled, and things stuck to walls (a placed tripmine), stay put.
 
 ## See-through rendering
@@ -107,6 +113,9 @@ saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |
 | `sv_portal_debug` | 0 | server (cheat) | Draw detection volumes, placement traces, exit boxes |
 | `sv_portal_debug_moves` | 0 | server | Log each player portal transition (eye depth, height and speed before/after) |
+| `cl_portal_view_ease` | 0.2 | client | Seconds the camera takes to settle after a portal turns your view (0 = instant) |
+| `sv_portal_soundscape_hold` | 2 | server | Seconds a player's ambient soundscape is kept after a portal trip (stops restarts) |
+| `sv_portal_mod_version` | (version.txt) | server, replicated | Release the server runs; clients on another release get a chat warning |
 
 ## Dedicated server
 

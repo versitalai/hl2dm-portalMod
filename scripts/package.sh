@@ -48,6 +48,9 @@ if [[ ${#platforms[@]} -eq 0 ]]; then
 fi
 
 cp "$REPO_ROOT/packaging/install.sh" "$REPO_ROOT/packaging/install.bat" "$STAGE/"
+# Self-update (the desktop launchers run it first) and the version it compares.
+cp "$REPO_ROOT/packaging/update.bat" "$OUT/"
+printf '%s' "$VERSION" > "$OUT/version.txt"
 
 # Dedicated server kit.
 SERVER="$STAGE/server"
@@ -79,6 +82,12 @@ Running a server: see server/README_SERVER.txt. Players still need the mod
 installed; a server can send maps and models, but never code.
 Shared or no-admin PCs: install.bat asks for the Steam folder if it can't find
 it, and puts an "HL2DM Portal" shortcut on the desktop.
+
+Updates (Windows): the desktop shortcuts check GitHub for a newer release each
+time you start the game and install it by themselves (a few seconds, only when
+there is one). Run hl2dm_portal\update.bat to check by hand; put a file named
+no_auto_update.txt next to it to turn the automatic check off. Joining a server
+that runs another version shows a warning in chat.
 
 Slow PC? Start once with the "HL2DM Portal (low graphics)" shortcut (or type
 "exec potato" in the console): lowest graphics, saved for later launches.

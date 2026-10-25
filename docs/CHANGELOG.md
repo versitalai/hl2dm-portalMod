@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.4.3 — 2026-10-25
+
+From the v0.4.2 play-test. Each fix except the settings window and the camera ease has a matching self-test check.
+
+### Fixed
+- **Portal Settings text overlapped at high resolutions.** The window inherits proportional (resolution-scaled) fonts
+  from the main menu, but its layout was in fixed pixels; positions and sizes now scale with the fonts.
+- **Falling fast into a floor portal sometimes stopped you dead.** Two causes, both with a wall portal as the exit:
+  - Feet first into the floor portal, the part of you already through sticks out of the wall up to a body length
+    before your eye crosses. Anything within that distance in front of the exit (a pillar, a railing) stopped you
+    inside the hole, and you sank through with no speed. Now, stopped like that while going in fast, you go through
+    at once with the speed you came in with, and meet the obstacle on the other side.
+  - Coming out, the mapped eye put the feet below the hole (in the floor), or the floor in front of the wall was a
+    little higher than the hole's bottom edge. The exit now lines the hull up strictly inside the hole, pushes out,
+    steps up (up to a stair step) if needed, and finishes the tick's move. The camera never ends up behind the exit.
+- **Stuck at a floor portal's edge / snapped in when standing there.** The funnel pulled anyone standing with their
+  center over the hole toward its middle at 150-600 u/s, faster than walking away. Standing players are now funneled
+  only when well over the hole (ellipse x0.8), not while walking away from it, and slowly (80 u/s). Dropping onto
+  it at under 50 u/s (stepping off a ledge) counts as standing.
+- **Walking into a portal whose exit is blocked froze you (even mid-air).** Each portal checks for room in front of
+  the other one (world, players and fixed props; loose props never block). With no room it's a plain wall/floor.
+- **Hard to bring a held object back through.** Pulled back toward you, the object was dragged at a point behind the
+  far portal, i.e. at the wall next to the hole unless you aimed right at the portal. It's now steered into the hole.
+
+### Added
+- **Explosions go through portals.** A blast that can see a portal goes off again just out of the linked one, with
+  the radius and damage left after the distance to the hole (same falloff over the whole path).
+- **Camera eases after a portal turns it** (roll dropped, pitch past vertical) instead of snapping:
+  `cl_portal_view_ease` (seconds, default 0.2, 0 = off). View only; aim and movement are exact.
+- **Self-updating installs (Windows).** The desktop shortcuts run `update.bat quiet` first: one request to GitHub,
+  and only if a newer release is out it downloads it and runs its installer (no admin). `update.bat` checks by hand;
+  `no_auto_update.txt` turns the automatic check off. Releases carry `version.txt`.
+- Servers publish their release in `sv_portal_mod_version`; joining with a different release shows a chat warning.
+- **Ambient sound no longer restarts on portal trips** (dm_lockdown's announcer replaying): for
+  `sv_portal_soundscape_hold` seconds (default 2) after going through, the player's soundscape stays as it was. Going
+  back within that time restarts nothing; staying switches as usual afterwards.
+- Self-test: held prop comes back, walking off a floor portal's edge, 1200 u/s falls (3 offsets), blocked exit acts
+  solid, explosion through a portal. CI tests `update.bat` updating an old install to the latest release.
+
 ## 0.4.2 — 2026-10-24
 
 From the v0.4.1 play-test. Each fix has a matching check in the dedicated-server self-test.

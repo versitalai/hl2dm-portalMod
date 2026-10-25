@@ -18,6 +18,7 @@
 #include "player_pickup.h"
 #include "usercmd.h"
 #include "in_buttons.h"
+#include "explode.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -42,6 +43,10 @@ public:
 		m_flAttackUntil = 0.0f;
 		m_flExitSpeed = -1.0f;
 		m_bTrackExitSpeed = false;
+		m_hExitTrack = NULL;
+		m_flFastFallMin = FLT_MAX;
+		m_flHeldLogUntil = m_flNextHeldLog = 0.0f;
+		m_flTickLogUntil = 0.0f;
 		m_flLoopStart = -1.0f;
 		m_flPeakEarly = m_flPeakLate = -FLT_MAX;
 		m_flLastVz = 0.0f;
@@ -264,9 +269,30 @@ private:
 		if ( m_hWall )
 			m_flScenarioClosestW = MIN( m_flScenarioClosestW, ( vecCenter - m_hWall->GetAbsOrigin() ).Length() );
 
-		if ( m_bTrackExitSpeed && m_flExitSpeed < 0.0f && m_hFloor && ( vecCenter - m_hFloor->GetAbsOrigin() ).Length() < 100.0f )
+		CHL2MPPortal *pExitTrack = m_hExitTrack ? m_hExitTrack.Get() : m_hFloor.Get();
+		if ( m_bTrackExitSpeed && m_flExitSpeed < 0.0f && pExitTrack && ( vecCenter - pExitTrack->GetAbsOrigin() ).Length() < 100.0f )
 		{
 			m_flExitSpeed = pBot->GetAbsVelocity().Length();
+		}
+
+		if ( gpGlobals->curtime < m_flTickLogUntil )
+		{
+			Vector p = pBot->GetAbsOrigin(), v = pBot->GetAbsVelocity();
+			Msg( "PORTALTEST tick t=%.3f bot (%.1f %.1f %.1f) vel (%.0f %.0f %.0f) ground=%s\n", gpGlobals->curtime, p.x, p.y, p.z, v.x, v.y, v.z,
+				pBot->GetGroundEntity() ? pBot->GetGroundEntity()->GetClassname() : "none" );
+		}
+
+		if ( gpGlobals->curtime < m_flHeldLogUntil && gpGlobals->curtime >= m_flNextHeldLog && m_hHeldBox && m_hFloor )
+		{
+			m_flNextHeldLog = gpGlobals->curtime + 0.25f;
+			extern bool PhysCannon_GetHeldObjectTarget( CBaseEntity *pObject, Vector *pTarget );
+			Vector vecTarget( 0, 0, 0 );
+			bool bTarget = PhysCannon_GetHeldObjectTarget( m_hHeldBox, &vecTarget );
+			Vector b = m_hHeldBox->WorldSpaceCenter();
+			Vector vecNormal = m_hFloor->GetSurfaceNormal();
+			Msg( "PORTALTEST info held box at (%.0f %.0f %.0f) %.0f off the floor portal, target %d (%.0f %.0f %.0f) %.0f off it, should_teleport=%d\n",
+				b.x, b.y, b.z, DotProduct( b - m_hFloor->GetAbsOrigin(), vecNormal ), bTarget, vecTarget.x, vecTarget.y, vecTarget.z,
+				DotProduct( vecTarget - m_hFloor->GetAbsOrigin(), vecNormal ), m_hFloor->ShouldTeleport( m_hHeldBox ) );
 		}
 
 		if ( m_flLoopStart > 0.0f )
@@ -640,6 +666,24 @@ private:
 			int nBoxTeleports = m_hHeldBox ? CHL2MPPortal::CountTeleports( m_hHeldBox ) - m_nBoxTeleportsBefore : -1;
 			bool bHeld = m_hHeldBox && pBot->IsHoldingEntity( m_hHeldBox );
 			Result( "held_prop_no_flip_flop", bHeld && nBoxTeleports >= 0 && nBoxTeleports <= 1, "held=%d box_teleports=%d", bHeld, nBoxTeleports );
+
+			// Bug report: hard to bring a held object back through. Turn well
+			// away from the portal: the box, held through it, has to come back.
+			m_nBoxTeleportsBefore = m_hHeldBox ? CHL2MPPortal::CountTeleports( m_hHeldBox ) : 0;
+			m_angBot.y += 75.0f;
+			ToBasePlayer( m_hBot )->SnapEyeAngles( m_angBot );	// a bot's usercmd angles don't override a snap
+			m_flHeldLogUntil = gpGlobals->curtime + 3.0f;
+			Wait( 3.0f );
+			return;
+		}
+
+		case 9:
+		{
+			CHL2_Player *pBot = static_cast<CHL2_Player *>( ToBasePlayer( m_hBot ) );
+			int nBack = m_hHeldBox ? CHL2MPPortal::CountTeleports( m_hHeldBox ) - m_nBoxTeleportsBefore : -1;
+			bool bHeld = m_hHeldBox && pBot->IsHoldingEntity( m_hHeldBox );
+			float flDist = m_hHeldBox ? ( m_hHeldBox->WorldSpaceCenter() - pBot->EyePosition() ).Length() : -1.0f;
+			Result( "held_prop_comes_back", bHeld && nBack >= 1 && flDist < 120.0f, "held=%d teleports=%d dist=%.0f", bHeld, nBack, flDist );
 			pBot->ForceDropOfCarriedPhysObjects( NULL );
 			if ( m_hHeldBox )
 				UTIL_Remove( m_hHeldBox );
@@ -671,7 +715,7 @@ private:
 			return;
 		}
 
-		case 9:
+		case 10:
 		{
 			CBasePlayer *pBot = ToBasePlayer( m_hBot );
 			Msg( "PORTALTEST info swinging %s\n", pBot->GetActiveWeapon() ? pBot->GetActiveWeapon()->GetClassname() : "nothing" );
@@ -680,7 +724,7 @@ private:
 			return;
 		}
 
-		case 10:
+		case 11:
 		{
 			int iHealth = m_hCrate ? m_hCrate->GetHealth() : -1;
 			Result( "melee_through_portal", !m_hCrate || iHealth < m_iCrateHealth, "crate_health %d -> %d", m_iCrateHealth, iHealth );
@@ -698,7 +742,7 @@ private:
 			return;
 		}
 
-		case 11:
+		case 12:
 		{
 			float flMoved = ( ToBasePlayer( m_hBot )->GetAbsOrigin() - m_vecEdgeStart ).Length();
 			Result( "floor_edge_stands_still", flMoved < 4.0f && BotSnaps() == 0, "moved=%.1f snaps=%d", flMoved, BotSnaps() );
@@ -712,9 +756,139 @@ private:
 			return;
 		}
 
-		case 12:
+		case 13:
 		{
 			Result( "floor_portal_funnels_in", m_flScenarioClosestW < 100.0f && BotSnaps() == 0, "closest_to_other=%.0f snaps=%d", m_flScenarioClosestW, BotSnaps() );
+
+			// Bug report: walking off a floor portal's edge got you stuck (it
+			// pulled you back in). Start part over the hole and walk away.
+			Vector vecRight;
+			m_hFloor->GetPortalVectors( NULL, &vecRight, NULL );
+			QAngle angOut;
+			VectorAngles( vecRight, angOut );
+			PlaceBot( m_hFloor->GetAbsOrigin() + vecRight * 20.0f + Vector( 0, 0, 0.1f ), angOut, vec3_origin );	// on the floor, not dropping onto it
+			m_flBotForward = 200.0f;
+			// Half a second: walking on in this direction leads into the wall portal.
+			Wait( 0.5f );
+			return;
+		}
+
+		case 14:
+		{
+			Vector vecFromHole = ToBasePlayer( m_hBot )->GetAbsOrigin() - m_hFloor->GetAbsOrigin();
+			vecFromHole.z = 0.0f;
+			Result( "floor_edge_walk_off", m_flScenarioClosestW >= 100.0f && vecFromHole.Length() > 50.0f && BotSnaps() == 0,
+				"closest_to_other=%.0f now %.0f from the hole snaps=%d", m_flScenarioClosestW, vecFromHole.Length(), BotSnaps() );
+			m_flBotForward = 0.0f;
+		}
+			// Fall through: first drop.
+		case 15:
+		case 16:
+		case 17:
+		{
+			// Bug report: falling fast sometimes stops you. Drop into the floor
+			// portal at 1200 u/s (center, then off-center both ways along the
+			// portal's up axis); it comes out of the wall portal, whose bottom is
+			// at floor level. It must keep its speed.
+			if ( m_iStep > 15 && m_bTrackExitSpeed )
+			{
+				m_flFastFallMin = MIN( m_flFastFallMin, MAX( m_flExitSpeed, 0.0f ) );
+				Vector v = ToBasePlayer( m_hBot )->GetAbsOrigin();
+				Msg( "PORTALTEST info fast fall %d exit_speed=%.0f, bot now at (%.0f %.0f %.0f) speed %.0f\n", m_iStep - 15, m_flExitSpeed,
+					v.x, v.y, v.z, ToBasePlayer( m_hBot )->GetAbsVelocity().Length() );
+			}
+			if ( m_iStep <= 17 )
+			{
+				Vector vecUp;
+				m_hFloor->GetPortalVectors( NULL, NULL, &vecUp );
+				float flOffsets[3] = { 0.0f, 24.0f, -24.0f };
+				Vector vecFloorSpot = m_hFloor->GetAbsOrigin() + vecUp * flOffsets[m_iStep - 15];
+				// As high as the room allows (the 1200 u/s start does the rest).
+				trace_t trUp;
+				UTIL_TraceHull( vecFloorSpot + Vector( 0, 0, 2 ), vecFloorSpot + Vector( 0, 0, 300 ), VEC_HULL_MIN, VEC_HULL_MAX, MASK_PLAYERSOLID, m_hBot, COLLISION_GROUP_PLAYER_MOVEMENT, &trUp );
+				float flHeight = MAX( ( trUp.endpos.z - vecFloorSpot.z ) - 4.0f, 2.0f );
+				Msg( "PORTALTEST info fast fall %d from %.0f up\n", m_iStep - 14, flHeight );
+				PlaceBot( vecFloorSpot + Vector( 0, 0, flHeight ), m_angBot, Vector( 0, 0, -1200 ) );
+				m_flTickLogUntil = gpGlobals->curtime + 0.3f;
+				ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
+				m_hExitTrack = m_hWall;
+				m_flExitSpeed = -1.0f;
+				m_bTrackExitSpeed = true;
+				Wait( 1.2f );
+				return;
+			}
+		}
+			// Fall through after the last drop.
+		{
+			m_bTrackExitSpeed = false;
+			m_hExitTrack = NULL;
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
+			Result( "fast_fall_keeps_speed", m_flFastFallMin >= 1000.0f && BotSnaps() == 0, "slowest_exit_speed=%.0f snaps=%d", m_flFastFallMin, BotSnaps() );
+
+			// Bug report: walking into a portal whose exit is blocked froze you,
+			// even in the air. Block the wall portal's exit with a crate; the
+			// floor portal must then be plain floor.
+			CBaseEntity *pBlocker = CreateEntityByName( "prop_dynamic_override" );
+			pBlocker->SetAbsOrigin( m_hWall->GetAbsOrigin() + m_vecWallNormal * 24.0f );
+			pBlocker->KeyValue( "model", "models/props_junk/wood_crate001a.mdl" );
+			pBlocker->KeyValue( "solid", "6" );
+			pBlocker->Precache();
+			DispatchSpawn( pBlocker );
+			pBlocker->Activate();
+			m_hBlocker = pBlocker;
+			PlaceBot( m_hFloor->GetAbsOrigin() + Vector( 0, 0, 40 ), m_angBot, vec3_origin );
+			Wait( 2.0f );
+			return;
+		}
+
+		case 18:
+		{
+			CBasePlayer *pBot = ToBasePlayer( m_hBot );
+			float flAbove = pBot->GetAbsOrigin().z - m_hFloor->GetAbsOrigin().z;
+			float flSpeed = pBot->GetAbsVelocity().Length();
+			Result( "blocked_exit_acts_solid", fabs( flAbove ) < 3.0f && flSpeed < 5.0f && m_flScenarioClosestW > 60.0f && BotSnaps() == 0,
+				"height_over_portal=%.1f speed=%.0f closest_to_exit=%.0f snaps=%d", flAbove, flSpeed, m_flScenarioClosestW, BotSnaps() );
+			if ( m_hBlocker )
+				UTIL_Remove( m_hBlocker );
+
+			// Bug report: explosions next to a portal don't go through. Blast in
+			// front of the wall portal, out of direct reach of a crate over the
+			// floor portal (but within reach through the portals).
+			ParkBot();
+			CBaseEntity *pCrate = CreateEntityByName( "prop_physics" );
+			pCrate->SetAbsOrigin( m_hFloor->GetAbsOrigin() + Vector( 0, 0, 40 ) );
+			pCrate->KeyValue( "model", "models/props_junk/wood_crate001a.mdl" );
+			pCrate->KeyValue( "health", "100" );
+			pCrate->KeyValue( "spawnflags", "8" );	// motion disabled: stays over the portal
+			pCrate->Precache();
+			DispatchSpawn( pCrate );
+			pCrate->Activate();
+			m_hCrate = pCrate;
+			m_iCrateHealth = pCrate->GetHealth();
+			Wait( 0.5f );	// a new entity isn't in the spatial partition (blast queries) right away
+			return;
+		}
+
+		case 19:
+		{
+			Vector vecBlast = m_hWall->GetAbsOrigin() + m_vecWallNormal * 40.0f;
+			if ( m_hCrate )
+			{
+				Msg( "PORTALTEST info blast %.0f from the crate directly\n", ( vecBlast - m_hCrate->WorldSpaceCenter() ).Length() );
+			}
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 1 );
+			ExplosionCreate( vecBlast, vec3_angle, NULL, 100, 150, true );
+			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
+			Wait( 0.5f );
+			return;
+		}
+
+		case 20:
+		{
+			int iHealth = m_hCrate ? m_hCrate->GetHealth() : -1;
+			Result( "explosion_through_portal", !m_hCrate || iHealth < m_iCrateHealth, "crate_health %d -> %d", m_iCrateHealth, iHealth );
+			if ( m_hCrate )
+				UTIL_Remove( m_hCrate );
 
 			// Bug report: two floor portals: you go higher and higher. Move the
 			// wall portal onto the floor nearby and drop the bot into one.
@@ -753,7 +927,7 @@ private:
 			return;
 		}
 
-		case 13:
+		case 21:
 		{
 			m_flLoopStart = -1.0f;
 			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
@@ -800,6 +974,11 @@ private:
 	int		m_nSnapsBefore, m_nBoxTeleportsBefore;
 	int		m_iCrateHealth;
 	Vector	m_vecEdgeStart;
+	CHandle<CHL2MPPortal> m_hExitTrack;
+	float	m_flHeldLogUntil, m_flNextHeldLog;
+	float	m_flTickLogUntil;	// exit speed is measured near this portal (default floor)
+	float	m_flFastFallMin;
+	EHANDLE	m_hBlocker;
 };
 
 static CHL2MPPortalSelfTest g_HL2MPPortalSelfTest;

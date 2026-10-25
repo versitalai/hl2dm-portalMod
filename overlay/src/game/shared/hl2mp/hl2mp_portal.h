@@ -77,9 +77,21 @@ public:
 	bool			CanCarve() const;
 	// Does a hull (world center, half size) fit through the hole for movement?
 	bool			HullFitsHole( const Vector &vecCenter, const Vector &vecHalf ) const;
+	// Shift along the portal plane that puts a hull's footprint inside the hole
+	// (zero when it already fits). False if the hull never fits. flSlack grows
+	// the hole: 0.75 matches the collision carving (1 unit) for going in;
+	// coming out needs the hull strictly inside, or a floor-level wall portal
+	// leaves the feet in the floor.
+	bool			GetHoleFitShift( const Vector &vecCenter, const Vector &vecHalf, Vector *pShift, float flSlack ) const;
+	// Is there room for this hull just out of this portal? A blocked exit makes
+	// the linked portal solid for movement instead of trapping the player.
+	bool			HasRoomForHull( const Vector &vecMins, const Vector &vecMaxs, IHandleEntity *pIgnore ) const;
 
 	// Is a point (near the portal plane) inside the ellipse? flScale grows/shrinks it.
 	bool			IsPointInEllipse( const Vector &vPoint, float flScale = 1.0f ) const;
+	// A point behind the portal, moved along the plane into the hole (ellipse
+	// scaled by flScale) if it's outside it. Points in front are unchanged.
+	Vector			ClampBehindPointToHole( const Vector &vPoint, float flScale ) const;
 
 	// Global list of portals (both DLLs).
 	static int				GetPortalCount();
@@ -149,6 +161,10 @@ private:
 	mutable VMatrix	m_matCacheToLinked;
 	mutable int		m_nMatVersion;			// m_nFrameVersion it was built for
 	mutable int		m_nMatLinkedVersion;	// and the linked portal's
+	mutable int		m_nRoomTick;			// HasRoomForHull answer, one per tick
+	mutable const IHandleEntity *m_pRoomIgnore;
+	mutable Vector	m_vecRoomHalf;
+	mutable bool	m_bRoom;
 
 	CNetworkVar( bool, m_bActivated );
 	CNetworkVar( int, m_iPortalType );
@@ -182,6 +198,36 @@ Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector 
 // The portal whose plane the eye crossed while moving from vecEyeStart to
 // vecEye (with the hull inside its hole), or NULL.
 CHL2MPPortal *UTIL_HL2MPPortal_FindPlayerTransition( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecEyeStart, const Vector &vecEye );
+
+// The portal a hull partly through it was heading into fast and got stopped
+// in (the part through the hole hit something in front of the exit), or NULL.
+// Going feet first into a floor portal that comes out of a wall, the feet
+// stick out of the wall well before the eye crosses.
+CHL2MPPortal *UTIL_HL2MPPortal_FindBlockedEntry( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocityBefore, const Vector &vecVelocityAfter );
+
+// Release version from the mod folder's version.txt ("dev" without one).
+const char *UTIL_HL2MPPortal_GetModVersion();
+#ifdef GAME_DLL
+// Sets sv_portal_mod_version (replicated) so clients can compare.
+void UTIL_HL2MPPortal_PublishModVersion();
+#else
+// Chat warning when the server runs another release than this client.
+void UTIL_HL2MPPortal_CheckServerVersion();
+#endif
+
+#ifdef GAME_DLL
+// A portal trip can put a player in another part of the map in one tick, and
+// the soundscape (ambient loops, announcements) restarts. Hold the current one
+// for sv_portal_soundscape_hold seconds after a trip, so going back and forth
+// doesn't restart it.
+void UTIL_HL2MPPortal_NotePlayerTransit( CBasePlayer *pPlayer );
+bool UTIL_HL2MPPortal_HoldSoundscape( CBasePlayer *pPlayer );
+
+class CTakeDamageInfo;
+// Explosions reach through portals: for each open portal the blast can see,
+// the rest of its radius goes off again just out of the linked portal.
+void UTIL_HL2MPPortal_RadiusDamage( const CTakeDamageInfo &info, const Vector &vecSrc, float flRadius, int iClassIgnore, CBaseEntity *pEntityIgnore );
+#endif
 
 #ifdef CLIENT_DLL
 // Set while a portal view is being rendered into a render target.

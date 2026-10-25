@@ -6,6 +6,7 @@
 
 #include "cbase.h"
 #include "hl2mp_portal.h"
+#include "filesystem.h"
 
 #ifdef CLIENT_DLL
 	#include "materialsystem/imesh.h"
@@ -15,6 +16,7 @@
 	#include "viewrender.h"
 	#include "view.h"
 	#include "c_world.h"
+	#include "hl2mp_hud_chat.h"
 #else
 	#include "world.h"
 	#include "vphysics/player_controller.h"
@@ -30,6 +32,60 @@
 ConVar sv_portal_debug( "sv_portal_debug", "0", FCVAR_CHEAT, "Draw portal teleport volumes and placement traces." );
 ConVar sv_portal_lookahead( "sv_portal_lookahead", "3", FCVAR_NONE, "How many ticks ahead fast movers are caught before they would hit the portal surface." );
 ConVar sv_portal_cooldown( "sv_portal_cooldown", "0.05", FCVAR_NONE, "Seconds before an entity that just went through a portal can go through again." );
+#endif
+
+// The release this build came from, from version.txt (written by
+// scripts/package.sh). Servers publish theirs so players can tell when their
+// copy is out of date.
+ConVar sv_portal_mod_version( "sv_portal_mod_version", "", FCVAR_REPLICATED | FCVAR_DONTRECORD, "HL2DM Portal release the server runs (from its version.txt)." );
+
+const char *UTIL_HL2MPPortal_GetModVersion()
+{
+	static char s_szVersion[64] = "";
+	if ( !s_szVersion[0] )
+	{
+		FileHandle_t hFile = filesystem->Open( "version.txt", "rb", "MOD" );
+		if ( hFile )
+		{
+			int nRead = filesystem->Read( s_szVersion, sizeof( s_szVersion ) - 1, hFile );
+			filesystem->Close( hFile );
+			s_szVersion[MAX( nRead, 0 )] = '\0';
+			Q_StripPrecedingAndTrailingWhitespace( s_szVersion );
+		}
+		if ( !s_szVersion[0] )
+		{
+			Q_strncpy( s_szVersion, "dev", sizeof( s_szVersion ) );
+		}
+	}
+	return s_szVersion;
+}
+
+#ifdef GAME_DLL
+void UTIL_HL2MPPortal_PublishModVersion()
+{
+	sv_portal_mod_version.SetValue( UTIL_HL2MPPortal_GetModVersion() );
+}
+#else
+void UTIL_HL2MPPortal_CheckServerVersion()
+{
+	// Once per server version per game session; a server that predates this
+	// (empty) or a test build on either end ("dev", a commit) says nothing.
+	static char s_szWarned[64] = "";
+	const char *pszServer = sv_portal_mod_version.GetString();
+	const char *pszMine = UTIL_HL2MPPortal_GetModVersion();
+	if ( pszServer[0] != 'v' || pszMine[0] != 'v' || !Q_strcmp( pszServer, pszMine ) || !Q_strcmp( pszServer, s_szWarned ) )
+		return;
+	Q_strncpy( s_szWarned, pszServer, sizeof( s_szWarned ) );
+
+	char szMessage[256];
+	Q_snprintf( szMessage, sizeof( szMessage ), "This server runs HL2DM Portal %s, you have %s. Quit and start the game from the HL2DM Portal desktop shortcut to update (or run update.bat in the mod folder).", pszServer, pszMine );
+	Msg( "%s\n", szMessage );
+	CBaseHudChat *pChat = (CBaseHudChat *)GET_HUDELEMENT( CHudChat );
+	if ( pChat )
+	{
+		pChat->ChatPrintf( 0, CHAT_FILTER_NONE, "%s", szMessage );
+	}
+}
 #endif
 
 #ifdef CLIENT_DLL
@@ -92,6 +148,10 @@ CHL2MPPortal::CHL2MPPortal()
 	m_hLinkedPortal = NULL;
 	m_nFrameVersion = 0;
 	m_nMatVersion = m_nMatLinkedVersion = 0;
+	m_nRoomTick = -1;
+	m_pRoomIgnore = NULL;
+	m_vecRoomHalf.Init();
+	m_bRoom = true;
 	m_iCacheAxis = -1;
 	m_flCacheAxisSign = 1.0f;
 #ifdef CLIENT_DLL
@@ -216,6 +276,24 @@ bool CHL2MPPortal::IsPointInEllipse( const Vector &vPoint, float flScale ) const
 	return ( flX * flX + flY * flY ) <= 1.0f;
 }
 
+Vector CHL2MPPortal::ClampBehindPointToHole( const Vector &vPoint, float flScale ) const
+{
+	UpdateFrameCache();
+	Vector vDelta = vPoint - m_vecCacheOrigin;
+	if ( DotProduct( vDelta, m_vecCacheForward ) >= 0.0f )
+		return vPoint;
+
+	float flX = DotProduct( vDelta, m_vecCacheRight ) / ( HL2MP_PORTAL_HALF_WIDTH * flScale );
+	float flY = DotProduct( vDelta, m_vecCacheUp ) / ( HL2MP_PORTAL_HALF_HEIGHT * flScale );
+	float flLen = sqrtf( flX * flX + flY * flY );
+	if ( flLen <= 1.0f )
+		return vPoint;
+
+	float flShrink = 1.0f / flLen - 1.0f;
+	return vPoint + m_vecCacheRight * ( flX * HL2MP_PORTAL_HALF_WIDTH * flScale * flShrink ) +
+		m_vecCacheUp * ( flY * HL2MP_PORTAL_HALF_HEIGHT * flScale * flShrink );
+}
+
 CHL2MPPortal *CHL2MPPortal::FindPortalAtSurface( const Vector &vPoint, const Vector &vNormal, float flPlaneTolerance, CHL2MPPortal *pIgnore )
 {
 	for ( int i = 0; i < s_HL2MPPortals.Count(); i++ )
@@ -311,6 +389,68 @@ static float BoxSupport( const Vector &vHalf, const Vector &vDir )
 	return fabs( vDir.x ) * vHalf.x + fabs( vDir.y ) * vHalf.y + fabs( vDir.z ) * vHalf.z;
 }
 
+bool CHL2MPPortal::GetHoleFitShift( const Vector &vecCenter, const Vector &vecHalf, Vector *pShift, float flSlack ) const
+{
+	int k;
+	float flSign, flDist;
+	if ( !GetPlaneAxis( &k, &flSign, &flDist ) )
+		return false;
+
+	// Room for the center in the portal's bounding rectangle.
+	Vector vecRight, vecUp;
+	GetPortalVectors( NULL, &vecRight, &vecUp );
+	Vector vecPlanarHalf = vecHalf;
+	vecPlanarHalf[k] = 0.0f;
+	float flRoomRight = HL2MP_PORTAL_HALF_WIDTH + flSlack - BoxSupport( vecPlanarHalf, vecRight );
+	float flRoomUp = HL2MP_PORTAL_HALF_HEIGHT + flSlack - BoxSupport( vecPlanarHalf, vecUp );
+	if ( flRoomRight < 0.0f || flRoomUp < 0.0f )
+		return false;
+
+	Vector vecDelta = vecCenter - GetAbsOrigin();
+	float flX = DotProduct( vecDelta, vecRight );
+	float flY = DotProduct( vecDelta, vecUp );
+	*pShift = vecRight * ( clamp( flX, -flRoomRight, flRoomRight ) - flX ) +
+		vecUp * ( clamp( flY, -flRoomUp, flRoomUp ) - flY );
+	( *pShift )[k] = 0.0f;
+	return true;
+}
+
+// What can block a portal's exit: anything a player can't push out of the
+// way. Loose physics props (a can, a held box) never do.
+class CPortalExitFilter : public CTraceFilterSimple
+{
+public:
+	CPortalExitFilter( const IHandleEntity *pIgnore ) : CTraceFilterSimple( pIgnore, COLLISION_GROUP_PLAYER_MOVEMENT ) {}
+
+	virtual bool ShouldHitEntity( IHandleEntity *pHandleEntity, int contentsMask )
+	{
+		CBaseEntity *pEntity = EntityFromEntityHandle( pHandleEntity );
+		if ( pEntity && pEntity->GetMoveType() == MOVETYPE_VPHYSICS )
+			return false;
+		return CTraceFilterSimple::ShouldHitEntity( pHandleEntity, contentsMask );
+	}
+};
+
+bool CHL2MPPortal::HasRoomForHull( const Vector &vecMins, const Vector &vecMaxs, IHandleEntity *pIgnore ) const
+{
+	Vector vecHalf = ( vecMaxs - vecMins ) * 0.5f;
+	if ( m_nRoomTick == gpGlobals->tickcount && m_pRoomIgnore == pIgnore && m_vecRoomHalf == vecHalf )
+		return m_bRoom;
+
+	// Centered on the hole, just clear of the surface.
+	Vector vecNormal = GetSurfaceNormal();
+	Vector vecCenter = GetAbsOrigin() + vecNormal * ( BoxSupport( vecHalf, vecNormal ) + 1.0f );
+	trace_t tr;
+	CPortalExitFilter filter( pIgnore );
+	UTIL_TraceHull( vecCenter, vecCenter, -vecHalf, vecHalf, MASK_PLAYERSOLID, &filter, &tr );
+
+	m_nRoomTick = gpGlobals->tickcount;
+	m_pRoomIgnore = pIgnore;
+	m_vecRoomHalf = vecHalf;
+	m_bRoom = !tr.startsolid;
+	return m_bRoom;
+}
+
 Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocity, float flFrameTime )
 {
 	Vector vecMid = ( vecMins + vecMaxs ) * 0.5f;
@@ -337,44 +477,42 @@ Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector 
 			continue;
 
 		// Heading into it: moving toward the plane, or standing on a floor portal.
+		// Under 50 u/s counts as standing: stepping off a ledge onto a floor
+		// portal's edge isn't heading into it.
 		float flApproach = -flSign * vecVelocity[k];
-		bool bFloor = ( k == 2 && flSign > 0.0f );
-		if ( flApproach < 1.0f && !bFloor )
+		bool bStanding = ( flApproach < 50.0f );
+		if ( bStanding && !( k == 2 && flSign > 0.0f ) )
 			continue;
 		float flLookahead = MAX( 2.0f, flApproach * 0.25f );
 		if ( flGap > flLookahead )
 			continue;
 
-		// Only when aimed at the hole: the hull's center over the portal.
+		// Only when aimed at the hole: the hull's center over the portal. Someone
+		// standing on a floor portal has to be well over it: its edge is
+		// somewhere to stand, not a slope into the hole.
 		Vector vecOnPlane = vecCenter;
 		vecOnPlane[k] = flDist;
-		if ( !pPortal->IsPointInEllipse( vecOnPlane, 1.1f ) )
+		if ( !pPortal->IsPointInEllipse( vecOnPlane, bStanding ? 0.8f : 1.1f ) )
 			continue;
 
-		// Where the center has to be for the footprint to fit the hole (same
-		// rectangle, with its 1 unit of slack, as the collision carving).
-		Vector vecRight, vecUp;
-		pPortal->GetPortalVectors( NULL, &vecRight, &vecUp );
-		Vector vecPlanarHalf = vecHalf;
-		vecPlanarHalf[k] = 0.0f;
-		float flRoomRight = HL2MP_PORTAL_HALF_WIDTH + 0.75f - BoxSupport( vecPlanarHalf, vecRight );
-		float flRoomUp = HL2MP_PORTAL_HALF_HEIGHT + 0.75f - BoxSupport( vecPlanarHalf, vecUp );
-		if ( flRoomRight < 0.0f || flRoomUp < 0.0f )
+		Vector vecShift;
+		if ( !pPortal->GetHoleFitShift( vecOnPlane, vecHalf, &vecShift, 0.75f ) )
 			continue;	// never fits
-
-		Vector vecDelta = vecOnPlane - pPortal->GetAbsOrigin();
-		float flX = DotProduct( vecDelta, vecRight );
-		float flY = DotProduct( vecDelta, vecUp );
-		Vector vecShift = vecRight * ( clamp( flX, -flRoomRight, flRoomRight ) - flX ) +
-			vecUp * ( clamp( flY, -flRoomUp, flRoomUp ) - flY );
-		vecShift[k] = 0.0f;
 		float flShift = vecShift.Length();
 		if ( flShift < 0.01f )
 			return vec3_origin;		// lined up
 
-		// Get there before reaching the plane, but no faster than a quick sidestep.
-		float flTimeToPlane = ( flApproach > 1.0f ) ? MAX( flGap, 0.0f ) / flApproach : 0.0f;
-		float flSpeed = clamp( flShift / MAX( flTimeToPlane, flFrameTime ), 150.0f, 600.0f );
+		// Walking off a floor portal's edge: let them (pulling them back in
+		// trapped players there until they jumped).
+		Vector vecPlanarVelocity = vecVelocity;
+		vecPlanarVelocity[k] = 0.0f;
+		if ( bStanding && DotProduct( vecPlanarVelocity, vecShift ) < 0.0f && vecPlanarVelocity.LengthSqr() > 10.0f * 10.0f )
+			continue;
+
+		// Get there before reaching the plane, but no faster than a quick
+		// sidestep; standing still, a slow slide.
+		float flTimeToPlane = bStanding ? 0.0f : MAX( flGap, 0.0f ) / flApproach;
+		float flSpeed = bStanding ? 80.0f : clamp( flShift / MAX( flTimeToPlane, flFrameTime ), 150.0f, 600.0f );
 		float flStep = MIN( flShift, flSpeed * flFrameTime );
 		return vecShift * ( flStep / flShift );
 	}
@@ -419,6 +557,12 @@ bool UTIL_HL2MPPortal_TracePlayerHull( const Vector &vecStart, const Vector &vec
 		bool bInsideEnd = PortalHullFootprintInside( pPortal, vecCenterEnd, vecHalf, k, flDist );
 		if ( !bInsideStart && !bInsideEnd )
 			continue;	// against the wall next to the hole: normal collision
+
+		// Nowhere to come out (something in front of the other portal): the
+		// portal is a solid surface. Once partly through, carry on; the exit
+		// pushes the hull clear.
+		if ( flGapStart >= -PORTAL_CARVE_EPSILON && !pPortal->GetLinkedPortal()->HasRoomForHull( vecMins, vecMaxs, pIgnore ) )
+			continue;
 
 		// A position sticking through the plane outside the hole is inside the
 		// rim of the wall around it.
@@ -555,6 +699,39 @@ CHL2MPPortal *UTIL_HL2MPPortal_FindPlayerTransition( const Vector &vecOrigin, co
 			continue;
 
 		return pPortal;
+	}
+
+	return NULL;
+}
+
+CHL2MPPortal *UTIL_HL2MPPortal_FindBlockedEntry( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocityBefore, const Vector &vecVelocityAfter )
+{
+	Vector vecCenter = vecOrigin + ( vecMins + vecMaxs ) * 0.5f;
+	Vector vecHalf = ( vecMaxs - vecMins ) * 0.5f;
+
+	for ( int iPortal = 0; iPortal < s_HL2MPPortals.Count(); iPortal++ )
+	{
+		CHL2MPPortal *pPortal = s_HL2MPPortals[iPortal];
+		if ( !pPortal->CanCarve() )
+			continue;
+#ifdef CLIENT_DLL
+		if ( pPortal->IsDormant() || pPortal->GetLinkedPortal()->IsDormant() )
+			continue;
+#endif
+
+		int k;
+		float flSign, flDist;
+		pPortal->GetPlaneAxis( &k, &flSign, &flDist );
+
+		// Partly through the hole...
+		if ( PortalHullGap( vecCenter, vecHalf, k, flSign, flDist ) > -1.0f || !pPortal->HullFitsHole( vecCenter, vecHalf ) )
+			continue;
+
+		// ...was going in fast, and this move took most of that away.
+		float flBefore = -flSign * vecVelocityBefore[k];
+		float flAfter = -flSign * vecVelocityAfter[k];
+		if ( flBefore > 300.0f && flAfter < flBefore * 0.25f )
+			return pPortal;
 	}
 
 	return NULL;
@@ -1178,6 +1355,96 @@ void CHL2MPPortal::AddPortalsToPVS( unsigned char *pvs, int pvssize )
 
 		CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
 		engine->AddOriginToPVS( pLinked->GetAbsOrigin() + pLinked->GetSurfaceNormal() * 4.0f );
+	}
+}
+
+static ConVar sv_portal_soundscape_hold( "sv_portal_soundscape_hold", "2", FCVAR_NONE, "Seconds a player's soundscape stays as it was after going through a portal (0 = switch right away)." );
+static float s_flPlayerTransitTime[MAX_PLAYERS + 1];
+
+void UTIL_HL2MPPortal_NotePlayerTransit( CBasePlayer *pPlayer )
+{
+	int iIndex = pPlayer ? pPlayer->entindex() : 0;
+	if ( iIndex > 0 && iIndex <= MAX_PLAYERS )
+	{
+		s_flPlayerTransitTime[iIndex] = gpGlobals->curtime;
+	}
+}
+
+bool UTIL_HL2MPPortal_HoldSoundscape( CBasePlayer *pPlayer )
+{
+	int iIndex = pPlayer ? pPlayer->entindex() : 0;
+	if ( iIndex <= 0 || iIndex > MAX_PLAYERS || s_flPlayerTransitTime[iIndex] <= 0.0f )
+		return false;
+	float flSince = gpGlobals->curtime - s_flPlayerTransitTime[iIndex];
+	return flSince >= 0.0f && flSince < sv_portal_soundscape_hold.GetFloat();
+}
+
+extern ConVar sv_portal_debug_moves;
+
+void UTIL_HL2MPPortal_RadiusDamage( const CTakeDamageInfo &info, const Vector &vecSrc, float flRadius, int iClassIgnore, CBaseEntity *pEntityIgnore )
+{
+	if ( sv_portal_debug_moves.GetBool() )
+		Msg( "PORTALTEST blast at (%.0f %.0f %.0f) radius %.0f damage %.0f\n", vecSrc.x, vecSrc.y, vecSrc.z, flRadius, info.GetDamage() );
+	if ( flRadius <= 0.0f || info.GetDamage() <= 0.0f )
+		return;
+
+	for ( int i = 0; i < s_HL2MPPortals.Count(); i++ )
+	{
+		CHL2MPPortal *pPortal = s_HL2MPPortals[i];
+		if ( !pPortal->IsOpen() )
+			continue;
+
+		// In front of the portal and within reach of its hole.
+		Vector vecNormal = pPortal->GetSurfaceNormal();
+		Vector vecToSrc = vecSrc - pPortal->GetAbsOrigin();
+		float flFront = DotProduct( vecToSrc, vecNormal );
+		if ( flFront < -1.0f || flFront >= flRadius )
+			continue;
+
+		// Closest point of the hole (ellipse) to the blast.
+		Vector vecRight, vecUp;
+		pPortal->GetPortalVectors( NULL, &vecRight, &vecUp );
+		float flX = DotProduct( vecToSrc, vecRight ) / HL2MP_PORTAL_HALF_WIDTH;
+		float flY = DotProduct( vecToSrc, vecUp ) / HL2MP_PORTAL_HALF_HEIGHT;
+		float flLen = sqrtf( flX * flX + flY * flY );
+		if ( flLen > 1.0f )
+		{
+			flX /= flLen;
+			flY /= flLen;
+		}
+		Vector vecHole = pPortal->GetAbsOrigin() + vecRight * ( flX * HL2MP_PORTAL_HALF_WIDTH ) + vecUp * ( flY * HL2MP_PORTAL_HALF_HEIGHT );
+		float flToHole = ( vecSrc - vecHole ).Length();
+		float flRemaining = flRadius - flToHole;
+		if ( flRemaining < 8.0f )
+			continue;
+
+		// Nothing solid between the blast and the hole.
+		trace_t tr;
+		UTIL_TraceLine( vecSrc, vecHole + vecNormal * 2.0f, MASK_SOLID_BRUSHONLY, NULL, COLLISION_GROUP_NONE, &tr );
+		if ( tr.fraction < 1.0f )
+		{
+			if ( sv_portal_debug_moves.GetBool() )
+				Msg( "PORTALTEST blast can't see the portal hole (blocked at %.2f)\n", tr.fraction );
+			continue;
+		}
+
+		// The rest goes off just out of the other portal, with the damage it
+		// would still have there (same falloff over the whole path).
+		CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
+		VMatrix matToLinked = pPortal->MatrixThisToLinked();
+		Vector vecExitSrc = matToLinked.VMul4x3( vecHole ) + pLinked->GetSurfaceNormal() * 2.0f;
+
+		if ( sv_portal_debug_moves.GetBool() )
+		{
+			Msg( "PORTALTEST blast through portal: %.0f to the hole, radius %.0f -> %.0f, damage %.0f -> %.0f, out at (%.0f %.0f %.0f)\n",
+				flToHole, flRadius, flRemaining, info.GetDamage(), info.GetDamage() * flRemaining / flRadius, vecExitSrc.x, vecExitSrc.y, vecExitSrc.z );
+		}
+
+		CTakeDamageInfo infoExit = info;
+		infoExit.SetDamage( info.GetDamage() * flRemaining / flRadius );
+		infoExit.SetDamagePosition( vecExitSrc );
+		infoExit.SetReportedPosition( vecExitSrc );
+		g_pGameRules->CGameRules::RadiusDamage( infoExit, vecExitSrc, flRemaining, iClassIgnore, pEntityIgnore );
 	}
 }
 

@@ -158,6 +158,7 @@ jobs:
         shell: pwsh
         env:
           HL2DM_NO_PAUSE: '1'
+          HL2DM_GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $steam = Join-Path $env:RUNNER_TEMP 'Steam'
@@ -192,6 +193,20 @@ jobs:
           if (-not (Test-Path "$desktop\HL2DM Portal.bat")) { throw 'launcher missing' }
           if ((Get-Content "$desktop\HL2DM Portal (low graphics).bat" -Raw) -notmatch '\+exec potato') { throw 'low graphics launcher wrong' }
           Remove-Item 'pkg\server.txt'
+
+          Write-Host '== update.bat: an old copy updates itself to the latest release'
+          $moddir = "$steam\steamapps\sourcemods\hl2dm_portal"
+          if (-not (Test-Path "$moddir\update.bat")) { throw 'update.bat not installed' }
+          if ((Get-Content "$desktop\HL2DM Portal.bat" -Raw) -notmatch 'update\.bat" quiet') { throw 'launcher does not run the update check' }
+          Set-Content -Path "$moddir\version.txt" -Value 'v0.0.1' -NoNewline
+          cmd /c "`"$moddir\update.bat`"" | Out-Host
+          if ($LASTEXITCODE -ne 0) { throw 'update.bat failed' }
+          $latest = (Invoke-RestMethod -Uri 'https://api.github.com/repos/${{ github.repository }}/releases/latest' -Headers @{ 'User-Agent' = 'ci'; 'Authorization' = "Bearer $env:HL2DM_GITHUB_TOKEN" }).tag_name
+          $now = (Get-Content "$moddir\version.txt" -Raw).Trim()
+          if ($now -ne $latest) { throw "version.txt is $now after the update, expected $latest" }
+          Write-Host '== update.bat quiet when up to date: prints nothing'
+          $out = (cmd /c "`"$moddir\update.bat`" quiet" 2>&1 | Out-String).Trim()
+          if ($out) { throw "quiet check printed: $out" }
 
           Write-Host '== install given the sourcemods folder itself'
           $mods = Join-Path $env:RUNNER_TEMP 'Other\sourcemods'

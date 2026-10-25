@@ -16,7 +16,9 @@ rem Where Steam looks for mods. Shared and no-admin installs put Steam in odd
 rem places, so try, in order: the argument, Steam's own settings (per user,
 rem readable without admin), the running Steam, the usual folders, Steam
 rem shortcuts, a search of all drives, then ask.
-if not "%~1"=="" call :fromarg "%~1"
+rem update.bat names the folder it's updating (it may not be called sourcemods).
+if defined HL2DM_SOURCEMODS set "SOURCEMODS=%HL2DM_SOURCEMODS%"
+if not defined SOURCEMODS if not "%~1"=="" call :fromarg "%~1"
 if not defined SOURCEMODS call :fromregistry
 if not defined SOURCEMODS call :fromsearch running
 if not defined SOURCEMODS call :fromcommon
@@ -29,6 +31,8 @@ set "DEST=%SOURCEMODS%\%MOD%"
 
 rem Steam folder for the launcher and the SDK Base check, if not known yet.
 if not defined STEAM_DIR for %%I in ("%SOURCEMODS%\..\..") do if exist "%%~fI\steamapps\" set "STEAM_DIR=%%~fI"
+if not defined STEAM_DIR for /f "tokens=2,*" %%A in ('reg query "HKCU\Software\Valve\Steam" /v SteamPath 2^>nul ^| find "SteamPath"') do if exist "%%B\steam.exe" set "STEAM_DIR=%%B"
+if defined STEAM_DIR set "STEAM_DIR=%STEAM_DIR:/=\%"
 
 rem Can we write there? (Steam updates itself, so its folder normally is writable.)
 if not exist "%SOURCEMODS%\" mkdir "%SOURCEMODS%" 2>nul
@@ -165,9 +169,11 @@ if exist "%LIB%\steamapps\appmanifest_243750.acf" set "SDKBASE=%LIB%"
 goto :eof
 
 :launcher
+rem Updates first (quietly; see update.bat), then starts the game. One line:
+rem an update rewrites this file while it runs.
 > "%~1" echo @echo off
->> "%~1" echo rem Starts HL2DM Portal through Steam. Extra arguments go to the game, e.g. +connect 203.0.113.5:27016
->> "%~1" echo start "" "%STEAM_DIR%\steam.exe" -applaunch 243750 -game "%DEST%" %~2 %%*
+>> "%~1" echo rem Starts HL2DM Portal through Steam, updating it first. Extra arguments go to the game, e.g. +connect 203.0.113.5:27016
+>> "%~1" echo (if exist "%DEST%\update.bat" call "%DEST%\update.bat" quiet) ^& start "" "%STEAM_DIR%\steam.exe" -applaunch 243750 -game "%DEST%" %~2 %%* ^& exit /b
 goto :eof
 
 rem ---------------------------------------------------------------------------
