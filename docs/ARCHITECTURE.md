@@ -59,15 +59,16 @@ checks these conventions against the SDK's mathlib (`tests/run_math_test.sh`).
 ### Smooth prop crossing (server + client)
 
 A prop goes through the hole a piece at a time instead of popping out whole (`sv_portal_smooth_props`, default 1).
-`CanCrossSmoothly`: an axis-aligned portal, one moveable physics object (no ragdolls), its AABB footprint fits the
-hole, room for it out of the other portal, and heading in (or on a floor portal: gravity takes it in; a prop resting
+`CanCrossSmoothly`: an axis-aligned portal, one moveable physics object (no ragdolls), not held (the grab controller
+turns and steers it, and backing it out of a crossing jumps it away from the hold point: `+use` drops it), its AABB
+footprint fits the hole, room for it out of the other portal, and heading in (or on a floor portal: gravity takes it in; a prop resting
 against a wall portal still pops through, it would sit half in the wall).
 - `StartCrossing` records it and turns off its collisions with the world (`PhysDisableEntityCollisions` with
   `g_PhysWorldObject`): the wall around and behind the hole stops blocking it. Other props and players still do.
 - `UpdateCrossings` (a game system, every tick after entity think): while it's straddling, velocity is kept along the
   portal normal and spin is stopped (it can't drift into the walls it no longer hits); through a wall portal gravity is
-  off (it would sink into the bottom of the hole). Held objects follow the grab controller instead, and go
-  across only once the hold point is 2 units past the plane (like `ShouldTeleport`; else they flip between portals).
+  off (it would sink into the bottom of the hole). One picked up part way through follows the grab controller,
+  and goes across only once the hold point is 2 units past the plane (like `ShouldTeleport`; else it flips).
 - When its center crosses the plane, `TeleportEntity( bExact )` maps it exactly (still straddling, now the other
   portal's plane) and the crossing continues there. It ends, world collisions back on, once it's 2 units clear of the
   plane (moving away), or with a push-out if it turned out of line with the hole, a portal closed, or 4 s passed.

@@ -6,7 +6,8 @@
 - **Props slide through portals** instead of popping out whole. A physics prop whose cross-section fits the hole
   stops colliding with the world as it reaches the portal, moves straight through the plane, and is moved to the
   other side when its center crosses (still half through). Clients draw the part that's through coming out of the
-  other portal, so it looks like one prop passing through. `sv_portal_smooth_props` (server) and
+  other portal, so it looks like one prop passing through. Objects you're holding still pop through (the hold steers
+  them, not a straight slide). `sv_portal_smooth_props` (server) and
   `cl_portal_prop_clones` (client) turn it off. Self-test: `prop_crosses_smoothly`.
 
 ## 0.4.3 — 2026-10-25

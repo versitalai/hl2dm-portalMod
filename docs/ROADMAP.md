@@ -2,8 +2,8 @@
 
 ## Known limitations
 - **Projectiles** are caught in front of the wall and moved, not carved through it. Players walk into axis-aligned
-  portals and physics props slide through them; ragdolls, props wider than the hole and portals on slopes still
-  pop through whole.
+  portals and physics props slide through them; held objects, ragdolls, props wider than the hole and portals on
+  slopes still pop through whole.
 - **Sliding props ignore the world, not other props**: a prop part way through doesn't collide with the world at all
   (so nothing next to the hole stops it either), and a prop or static prop in the way on the exit side blocks it
   (it backs out after 4 s). Portal clones the geometry around the exit instead.

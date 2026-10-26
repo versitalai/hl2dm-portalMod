@@ -1409,6 +1409,13 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	if ( pEntity->VPhysicsGetObjectList( pList, ARRAYSIZE( pList ) ) != 1 || !pList[0]->IsMoveable() )
 		return false;
 
+	// Held objects go where the hold point goes (turned to the carry angles,
+	// steered into the hole), not straight through; backing one out of a
+	// crossing jumps it away from the hold point and the grab breaks. They
+	// pop through as before.
+	if ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD )
+		return false;
+
 	// Heading in (or lying on a floor portal, which gravity pulls it into).
 	// Something resting against a wall portal goes through whole: it would
 	// sit half in the wall with nothing moving it.
@@ -1513,10 +1520,9 @@ void CHL2MPPortal::UpdateCrossings()
 		pPhys->GetVelocity( &vVelocity, &angVelocity );
 		float flOutSpeed = DotProduct( vVelocity, vForward );
 
-		// A held object goes across only once the spot it's held at is past the
-		// plane too (as in ShouldTeleport). The hold keeps it hovering at the
-		// plane otherwise, and it would flip between the portals until the
-		// grab broke.
+		// Picked up part way through: it goes across only once the spot it's
+		// held at is past the plane too (as in ShouldTeleport). The hold keeps
+		// it hovering at the plane otherwise, flipping between the portals.
 		bool bHeldBack = false;
 		Vector vecHeldTarget;
 		if ( ( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) && PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
