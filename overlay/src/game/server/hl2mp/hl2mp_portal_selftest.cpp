@@ -789,8 +789,12 @@ private:
 
 			// Bug report: hard to bring a held object back through. Turn well
 			// away from the portal: the box, held through it, has to come back.
+			// Turn right, toward the open floor (the second floor portal goes
+			// there later): turning left aims the hold point into a wall ~45
+			// units away, and whether the box wedged between it and the bot stays
+			// held came down to a unit either way (contacts logged in the trace).
 			m_nBoxTeleportsBefore = m_hHeldBox ? CHL2MPPortal::CountTeleports( m_hHeldBox ) : 0;
-			m_angBot.y += 75.0f;
+			m_angBot.y -= 75.0f;
 			ToBasePlayer( m_hBot )->SnapEyeAngles( m_angBot );	// a bot's usercmd angles don't override a snap
 			m_flHeldLogUntil = gpGlobals->curtime + 3.0f;
 			Wait( 3.0f );
