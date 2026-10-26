@@ -20,6 +20,7 @@
 #include "in_buttons.h"
 #include "explode.h"
 #include "physics_shared.h"
+#include "vphysics/friction.h"
 #include "world.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -338,6 +339,31 @@ private:
 		Result( "prop_collider_built", nWallObjects > 0 && nFloorObjects > 0, "wall_objects=%d floor_objects=%d", nWallObjects, nFloorObjects );
 	}
 
+	// What a physics object is touching (entity class, contact point), and
+	// whether it's crossing a portal: for traces of props that get stuck.
+	void LogContacts( CBaseEntity *pEntity )
+	{
+		IPhysicsObject *pPhys = pEntity ? pEntity->VPhysicsGetObject() : NULL;
+		if ( !pPhys )
+			return;
+		char szContacts[512] = "";
+		IPhysicsFrictionSnapshot *pSnapshot = pPhys->CreateFrictionSnapshot();
+		for ( ; pSnapshot->IsValid(); pSnapshot->NextFrictionData() )
+		{
+			IPhysicsObject *pOther = pSnapshot->GetObject( 1 );
+			CBaseEntity *pOtherEntity = pOther ? static_cast<CBaseEntity *>( pOther->GetGameData() ) : NULL;
+			Vector vecPoint;
+			pSnapshot->GetContactPoint( vecPoint );
+			char szOne[96];
+			Q_snprintf( szOne, sizeof( szOne ), " %s%s@(%.0f %.0f %.0f)", pOtherEntity ? pOtherEntity->GetClassname() : "?",
+				( pOther && pOther->IsStatic() ) ? "[static]" : "", vecPoint.x, vecPoint.y, vecPoint.z );
+			Q_strncat( szContacts, szOne, sizeof( szContacts ) );
+		}
+		pPhys->DestroyFrictionSnapshot( pSnapshot );
+		Msg( "PORTALTEST info   touching:%s crossing=%d world_off=%d\n", szContacts[0] ? szContacts : " nothing",
+			CHL2MPPortal::IsCrossing( pEntity ), PhysEntityCollisionsAreDisabled( GetWorldEntity(), pEntity ) );
+	}
+
 	int BotSnaps()
 	{
 		return CHL2MPPortal::CountTeleports( m_hBot ) - m_nSnapsBefore;
@@ -385,6 +411,7 @@ private:
 			Msg( "PORTALTEST info held box at (%.0f %.0f %.0f) %.0f off the floor portal, target %d (%.0f %.0f %.0f) %.0f off it, should_teleport=%d\n",
 				b.x, b.y, b.z, DotProduct( b - m_hFloor->GetAbsOrigin(), vecNormal ), bTarget, vecTarget.x, vecTarget.y, vecTarget.z,
 				DotProduct( vecTarget - m_hFloor->GetAbsOrigin(), vecNormal ), m_hFloor->ShouldTeleport( m_hHeldBox ) );
+			LogContacts( m_hHeldBox );
 		}
 
 		if ( m_flLoopStart > 0.0f )
