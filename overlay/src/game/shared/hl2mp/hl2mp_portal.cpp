@@ -1513,8 +1513,20 @@ void CHL2MPPortal::UpdateCrossings()
 		pPhys->GetVelocity( &vVelocity, &angVelocity );
 		float flOutSpeed = DotProduct( vVelocity, vForward );
 
+		// A held object goes across only once the spot it's held at is past the
+		// plane too (as in ShouldTeleport). The hold keeps it hovering at the
+		// plane otherwise, and it would flip between the portals until the
+		// grab broke.
+		bool bHeldBack = false;
+		Vector vecHeldTarget;
+		if ( ( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) && PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
+			DotProduct( vForward, vecHeldTarget - pPortal->GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST )
+		{
+			bHeldBack = true;
+		}
+
 		// Center through: carry it to the other side, still straddling.
-		if ( flCenterDist < 0.0f )
+		if ( flCenterDist < 0.0f && !bHeldBack )
 		{
 			if ( pPortal->TeleportEntity( pEntity, true ) )
 			{
