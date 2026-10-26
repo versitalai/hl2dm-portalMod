@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.4 — unreleased
+
+### Added
+- **Props slide through portals** instead of popping out whole. A physics prop whose cross-section fits the hole
+  stops colliding with the world as it reaches the portal, moves straight through the plane, and is moved to the
+  other side when its center crosses (still half through). Clients draw the part that's through coming out of the
+  other portal, so it looks like one prop passing through. `sv_portal_smooth_props` (server) and
+  `cl_portal_prop_clones` (client) turn it off. Self-test: `prop_crosses_smoothly`.
+
 ## 0.4.3 — 2026-10-25
 
 From the v0.4.2 play-test. Each fix except the settings window and the camera ease has a matching self-test check.

@@ -37,7 +37,7 @@ From source on Linux, one command does it all (fetch SDK, build, package, instal
 | Thing | How |
 |---|---|
 | Players | Position, view angles, velocity carried through (walk, fall, fling) |
-| Physics props, dropped weapons, items | Position, orientation, linear + angular velocity |
+| Physics props, dropped weapons, items | Position, orientation, linear + angular velocity. Props that fit the hole slide through a piece at a time (the part through is drawn coming out of the other portal) |
 | Projectiles: rockets, crossbow bolts, SMG grenades, frags, AR2 energy balls, SLAM satchels | Caught up to `sv_portal_lookahead` ticks early, so fast ones don't hit the wall first |
 | Bullets (all hitscan weapons, shotgun pellets) | Trace continues out of the linked portal (up to 4 portals deep), with impacts and tracers on the far side |
 | Portal gun shots | Go through existing portals too, so you can place a portal through a portal |
@@ -110,6 +110,8 @@ saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
 | `cl_portal_recursion` | 1 | client | Allow live portal-in-portal views (High only) |
 | `cl_portal_draw_local_player` | 1 | client | Draw your own model in portal views |
 | `sv_portal_lookahead` | 3 | server | Ticks of lookahead for fast movers |
+| `sv_portal_smooth_props` | 1 | server | Physics props that fit the hole slide through (0 = they pop through whole) |
+| `cl_portal_prop_clones` | 1 | client | Draw the part of a sliding prop that's come out of the other portal |
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |
 | `sv_portal_debug` | 0 | server (cheat) | Draw detection volumes, placement traces, exit boxes |
 | `sv_portal_debug_moves` | 0 | server | Log each player portal transition (eye depth, height and speed before/after) |
