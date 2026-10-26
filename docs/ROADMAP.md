@@ -31,7 +31,10 @@
 
 ## Ideas / next steps
 1. Play-test pass: tune `sv_portal_lookahead`, exit gap, placement step; check prediction feel through portals.
-2. Full collision carving for props (Portal's "portal simulator": clone the geometry around the exit so a prop part
+2. Local collision world, next steps: props collide with it while crossing (today they ignore the world); remove the
+   split-hull fallback and the movement hacks it needed (forced crossing, exit push-out) once play-tested; shadow copies
+   of entities near the exit so things half through hit what's on the other side; an ellipse-shaped hole for props.
+   Older note: full collision carving for props (Portal's "portal simulator": clone the geometry around the exit so a prop part
    way through collides on both sides; today it ignores the world while sliding).
 3. Stencil-buffer rendering instead of render targets (exact, recursion-capable, no UV approximation).
 4. Portal-specific model, sounds, HUD icon, portal open/close particle effects.

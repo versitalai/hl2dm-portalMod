@@ -24,6 +24,8 @@
 #define CHL2MPPortal C_HL2MPPortal
 #endif
 
+class CHL2MPPortalWorld;	// hl2mp_portal_world.cpp
+
 // Half extents of the portal ellipse (local right / local up).
 #define HL2MP_PORTAL_HALF_WIDTH		32.0f
 #define HL2MP_PORTAL_HALF_HEIGHT	56.0f
@@ -93,6 +95,12 @@ public:
 	// scaled by flScale) if it's outside it. Points in front are unchanged.
 	Vector			ClampBehindPointToHole( const Vector &vPoint, float flScale ) const;
 
+	// Changes whenever the portal's frame does (placed somewhere else); unique
+	// across portals.
+	int				GetFrameVersion() const { UpdateFrameCache(); return m_nFrameVersion; }
+	// Where the portal's local collision world is kept (hl2mp_portal_world.cpp).
+	CHL2MPPortalWorld *&LocalWorldStorage() const { return m_pLocalWorld; }
+
 	// Global list of portals (both DLLs).
 	static int				GetPortalCount();
 	static CHL2MPPortal		*GetPortal( int i );
@@ -144,6 +152,9 @@ public:
 	virtual void	GetRenderBounds( Vector &mins, Vector &maxs );
 	virtual int		DrawModel( int flags );
 	virtual bool	ShouldReceiveProjectedTextures( int flags ) { return false; }
+	// Portals jump to where they're placed; the local collision world is built
+	// from the exact networked frame, never from a position part way there.
+	virtual bool	ShouldInterpolate() { return false; }
 
 	// Render target slot holding this portal's view, per render depth
 	// (0 = seen from the main view, 1 = seen inside another portal's view).
@@ -178,8 +189,12 @@ private:
 	mutable const IHandleEntity *m_pRoomIgnore;
 	mutable Vector	m_vecRoomHalf;
 	mutable bool	m_bRoom;
+	mutable CHL2MPPortalWorld *m_pLocalWorld;
 
 	CNetworkVar( bool, m_bActivated );
+	// The portal's angles, sent exactly (the entity's own are quantized): the
+	// client builds the same local collision world as the server from them.
+	CNetworkQAngle( m_angPortal );
 	CNetworkVar( int, m_iPortalType );
 	CNetworkHandle( CHL2MPPortal, m_hLinkedPortal );
 };
@@ -217,6 +232,19 @@ CHL2MPPortal *UTIL_HL2MPPortal_FindPlayerTransition( const Vector &vecOrigin, co
 // Going feet first into a floor portal that comes out of a wall, the feet
 // stick out of the wall well before the eye crosses.
 CHL2MPPortal *UTIL_HL2MPPortal_FindBlockedEntry( const Vector &vecOrigin, const Vector &vecMins, const Vector &vecMaxs, const Vector &vecVelocityBefore, const Vector &vecVelocityAfter );
+
+// The local collision world (hl2mp_portal_world.cpp). Near a carve-able portal,
+// player movement is traced against it: the world around the portal with the
+// hole cut out of the wall, and what's in front of the linked portal mapped in
+// behind the plane. Built on demand, rebuilt when either portal moves.
+extern ConVar sv_portal_local_world;
+// Is a swept box (world centers, half size) inside the region it covers?
+bool HL2MPPortalWorld_Contains( const CHL2MPPortal *pPortal, const Vector &vecCenterStart, const Vector &vecCenterEnd, const Vector &vecHalf );
+// Trace against it (world geometry only; hits report the world entity).
+// False if the portal has none.
+bool HL2MPPortalWorld_Trace( const CHL2MPPortal *pPortal, const Ray_t &ray, unsigned int mask, trace_t *pTrace );
+bool HL2MPPortalWorld_GetInfo( const CHL2MPPortal *pPortal, int *pLocalPieces, int *pRemotePieces, int *pStaticProps, int *pDisplacements, unsigned int *pChecksum );
+void HL2MPPortalWorld_Destroy( CHL2MPPortalWorld *pWorld );
 
 // Release version from the mod folder's version.txt ("dev" without one).
 const char *UTIL_HL2MPPortal_GetModVersion();

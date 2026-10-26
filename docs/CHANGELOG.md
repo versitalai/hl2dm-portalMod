@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0 — unreleased
+
+### Changed
+- **Players collide with a real hole near portals.** Each portal builds a local collision world: the map around it with
+  the hole cut out of the wall, and the other portal's surroundings behind it. Moving into or through a portal is
+  traced against that instead of the old split-hull approximation, so the rim, the exit floor and walls behave like
+  real geometry. `sv_portal_local_world 0` goes back to the old way. `sv_portal_world_info` / `cl_portal_world_info`
+  print what each portal built. Self-tests: `local_world_built`, `local_world_hole`, `local_world_other_side`.
+- CI runs the unit tests (`tests/run_math_test.sh`, new `tests/run_carve_test.sh`).
+
 ## 0.4.4 — 2026-10-26
 
 ### Added

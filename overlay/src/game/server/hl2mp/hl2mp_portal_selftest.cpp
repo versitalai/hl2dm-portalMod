@@ -289,6 +289,50 @@ private:
 		}
 	}
 
+	// Is there solid world at a point in the portal's local collision world?
+	bool LocalWorldSolidAt( CHL2MPPortal *pPortal, const Vector &vecPoint )
+	{
+		Ray_t ray;
+		ray.Init( vecPoint, vecPoint, Vector( -1, -1, -1 ), Vector( 1, 1, 1 ) );
+		trace_t tr;
+		return HL2MPPortalWorld_Trace( pPortal, ray, MASK_PLAYERSOLID, &tr ) && tr.startsolid;
+	}
+
+	// The local collision worlds of the wall + floor pair: built, the hole open,
+	// the wall beside it solid, and behind the floor portal the floor that's in
+	// front of the wall portal.
+	void CheckLocalWorld()
+	{
+		CHL2MPPortal *pPortals[2] = { m_hWall, m_hFloor };
+		bool bBuilt = true;
+		for ( int i = 0; i < 2; i++ )
+		{
+			int nLocal = 0, nRemote = 0, nProps = 0, nDisp = 0;
+			unsigned int nChecksum = 0;
+			bool bWorld = HL2MPPortalWorld_GetInfo( pPortals[i], &nLocal, &nRemote, &nProps, &nDisp, &nChecksum );
+			Msg( "PORTALTEST info %s portal local world: %d pieces here, %d from the other side, %d static props, %d displacement sets, checksum %08x\n",
+				i ? "floor" : "wall", nLocal, nRemote, nProps, nDisp, nChecksum );
+			bBuilt = bBuilt && bWorld && nLocal > 0 && nRemote > 0;
+		}
+		Result( "local_world_built", bBuilt );
+
+		Vector vecForward, vecRight, vecUp;
+		m_hWall->GetPortalVectors( &vecForward, &vecRight, &vecUp );
+		Vector vecWall = m_hWall->GetAbsOrigin();
+		bool bHoleOpen = !LocalWorldSolidAt( m_hWall, vecWall - vecForward * 8.0f );
+		bool bRimSolid = LocalWorldSolidAt( m_hWall, vecWall - vecForward * 8.0f + vecRight * ( HL2MP_PORTAL_HALF_WIDTH + 24.0f ) );
+		Result( "local_world_hole", bHoleOpen && bRimSolid, "open_behind_hole=%d solid_beside_it=%d", bHoleOpen, bRimSolid );
+
+		// The wall portal sits on the floor: 8 below its bottom edge, 24 out, is
+		// floor. Through the floor portal that point is behind it.
+		VMatrix matWallToFloor = m_hWall->MatrixThisToLinked();
+		Vector vecFloorThere = matWallToFloor.VMul4x3( vecWall + vecForward * 24.0f - vecUp * ( HL2MP_PORTAL_HALF_HEIGHT + 8.0f ) );
+		Vector vecAirThere = matWallToFloor.VMul4x3( vecWall + vecForward * 24.0f );
+		bool bFloor = LocalWorldSolidAt( m_hFloor, vecFloorThere );
+		bool bAir = !LocalWorldSolidAt( m_hFloor, vecAirThere );
+		Result( "local_world_other_side", bFloor && bAir, "floor_copied=%d air_copied=%d", bFloor, bAir );
+	}
+
 	int BotSnaps()
 	{
 		return CHL2MPPortal::CountTeleports( m_hBot ) - m_nSnapsBefore;
@@ -519,6 +563,7 @@ private:
 			Vector vecFloorPortal = m_hFloor->GetAbsOrigin();
 			Msg( "PORTALTEST info floor portal at (%.0f %.0f %.0f) should_teleport_prop=%d\n", vecFloorPortal.x, vecFloorPortal.y, vecFloorPortal.z,
 				m_hProp ? m_hFloor->ShouldTeleport( m_hProp ) : -1 );
+			CheckLocalWorld();
 			Wait( 1.5f );
 			return;
 		}

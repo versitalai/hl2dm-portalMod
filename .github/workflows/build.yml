@@ -32,6 +32,10 @@ jobs:
           scripts/build_linux.sh
           # 64-bit dedicated server launcher for the server kit.
           cc -O2 -o sdk/game/mod_hl2mp/bin/linux64/srcds_portal64 packaging/server/srcds_portal64.c -ldl
+      - name: Unit tests (portal math, hole carving)
+        run: |
+          tests/run_math_test.sh sdk
+          tests/run_carve_test.sh sdk
       - uses: actions/upload-artifact@v4
         with:
           name: bin-linux64

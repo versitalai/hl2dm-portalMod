@@ -7,6 +7,8 @@ How the portal mod works, file by file. Paths are relative to the SDK tree (`sdk
 | File | Kind | Role |
 |---|---|---|
 | `src/game/shared/hl2mp/hl2mp_portal.h/.cpp` | new | `prop_hl2mp_portal` entity: placement, teleporting, bullet tracing, client drawing |
+| `src/game/shared/hl2mp/hl2mp_portal_world.cpp` | new | Each portal's local collision world (wall with the hole cut out + the other side), traced by player movement |
+| `src/game/shared/hl2mp/hl2mp_portal_carve.h` | new | Convex plane-set geometry: vertices, cutting a prism out of a convex solid (tested by `tests/portal_carve_test.cpp`) |
 | `src/game/shared/hl2mp/weapon_portalgun.cpp` | new | `weapon_portalgun`: fires/places portals, owns one linked pair |
 | `src/game/client/hl2mp/hl2mp_rendertargets.cpp` | new | Exposes `IClientRenderTargets` for HL2MP; allocates `_rt_HL2MPPortal0/1` |
 | `game/mod_hl2mp/scripts/weapon_portalgun.txt` | new | Weapon script (models, sounds, HUD slot) |
@@ -78,6 +80,28 @@ against a wall portal still pops through, it would sit half in the wall).
   Each portal's opaque surface hides what's behind its plane (the part gone in, and the part of the copy not out yet),
   and portal views already clip at the exit plane, so no clip planes are needed. The copy swaps sides in the same
   frame the prop does, so the hand-over at the center is invisible. `cl_portal_prop_clones 0` turns copies off.
+
+## Local collision world (shared, `hl2mp_portal_world.cpp`)
+
+The map's collision has no holes: the wall behind a portal is solid. Each carve-able (axis-aligned) portal pair gets a
+local collision world, built on demand on client and server alike and rebuilt when either portal moves (frame versions):
+- **Region:** a box 128 units in front of and behind the plane, 96 beyond the hole on each side.
+- **This side:** world brushes in the region (`enginetrace->GetBrushesInAABB` / `GetBrushInfo`), clipped to it, with
+  the hole cut out (`PortalCarve_Subtract`): the portal's bounding rectangle + 1 unit of slack, from 1 unit in front of
+  the surface back. Players need the rectangle (a 72-tall hull doesn't fit the ellipse of a floor-level wall portal);
+  the cutter takes any convex prism, so an ellipse polygon can be used for props later.
+- **Other side:** brushes in the front half of the linked portal's region, mapped in behind this plane
+  (`linked->MatrixThisToLinked()`).
+- Static props (their vcollides) and displacements of both regions, uncut. The pieces are grouped by brush contents
+  (solid, player clip, grate...) into one `CPhysCollide` each, traced with `physcollision->TraceBox`.
+- **Parity:** the client must build the same geometry. Placement snaps the origin to 1/32 unit (what the network sends
+  exactly), the angles go out unquantized (`m_angPortal`, used for the frame), and client portals don't interpolate.
+  `sv_portal_world_info` / `cl_portal_world_info` print piece counts and a checksum per portal to compare.
+- **Player movement** (`UTIL_HL2MPPortal_TracePlayerHull`): under the same conditions as before (hull touching the
+  plane, footprint in the hole, room at the exit), if the sweep stays inside the region, the whole hull is traced
+  against the local world, and entities with entity-only traces: the part in front of the plane here, the part through
+  it at the other portal. First hit wins. Outside the region, or with `sv_portal_local_world 0`, the split-hull
+  approximation below is used.
 
 ## Walking through (shared, predicted)
 
