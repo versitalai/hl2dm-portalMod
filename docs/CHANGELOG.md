@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.4 — unreleased
+## 0.4.4 — 2026-10-26
 
 ### Added
 - **Props slide through portals** instead of popping out whole. A physics prop whose cross-section fits the hole
