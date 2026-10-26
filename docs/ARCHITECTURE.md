@@ -54,6 +54,30 @@ checks these conventions against the SDK's mathlib (`tests/run_math_test.sh`).
    first free one. If none is free it doesn't teleport (the portal acts like the wall it's on).
    Players keep an axis-aligned hull; only their view rotates (roll dropped, pitch clamped). VPhysics objects get
    their velocity re-applied (angular velocity is local-space, so it carries over unchanged) and are woken.
+   Physics props that can cross smoothly (below) don't teleport here; they start a crossing instead.
+
+### Smooth prop crossing (server + client)
+
+A prop goes through the hole a piece at a time instead of popping out whole (`sv_portal_smooth_props`, default 1).
+`CanCrossSmoothly`: an axis-aligned portal, one moveable physics object (no ragdolls), not held (the grab controller
+turns and steers it, and backing it out of a crossing jumps it away from the hold point: `+use` drops it), its AABB
+footprint fits the hole, room for it out of the other portal, and heading in (or on a floor portal: gravity takes it in; a prop resting
+against a wall portal still pops through, it would sit half in the wall).
+- `StartCrossing` records it and turns off its collisions with the world (`PhysDisableEntityCollisions` with
+  `g_PhysWorldObject`): the wall around and behind the hole stops blocking it. Other props and players still do.
+- `UpdateCrossings` (a game system, every tick after entity think): while it's straddling, velocity is kept along the
+  portal normal and spin is stopped (it can't drift into the walls it no longer hits); through a wall portal gravity is
+  off (it would sink into the bottom of the hole). One picked up part way through follows the grab controller,
+  and goes across only once the hold point is 2 units past the plane (like `ShouldTeleport`; else it flips).
+- When its center crosses the plane, `TeleportEntity( bExact )` maps it exactly (still straddling, now the other
+  portal's plane) and the crossing continues there. It ends, world collisions back on, once it's 2 units clear of the
+  plane (moving away), or with a push-out if it turned out of line with the hole, a portal closed, or 4 s passed.
+- Client: `C_HL2MPPortalCloneSystem` keeps a client-only copy (`C_HL2MPPortalPropClone`) of each physics prop within
+  24 units of an open portal's plane, in line with the hole. Every frame after interpolation (`Simulate`) it's put at
+  `M * prop` for whichever portal of the pair the prop is through, and drawn only while the prop is through the plane.
+  Each portal's opaque surface hides what's behind its plane (the part gone in, and the part of the copy not out yet),
+  and portal views already clip at the exit plane, so no clip planes are needed. The copy swaps sides in the same
+  frame the prop does, so the hand-over at the center is invisible. `cl_portal_prop_clones 0` turns copies off.
 
 ## Walking through (shared, predicted)
 
@@ -120,7 +144,8 @@ held object while it's non-zero. Only a chain deeper than 4 portals drops the ob
 - Floor + wall portals near the first spawn: small props stay server-side, a sleeping prop falls through a portal
   opened under it, held-flag props don't crash, a trace and a rocket go through, and the bot walks into the wall
   portal carrying a box (`+use`), steered to its center: it must come out of the floor portal without a snap, still
-  holding the box.
+  holding the box. Later scenarios: fast falls, floor-portal edges, blocked exits, explosions, a box thrown into the
+  wall portal that must be moved across while straddling both planes (`prop_crosses_smoothly`), floor loops.
 
 ## Explosions (server)
 

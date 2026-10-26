@@ -112,8 +112,21 @@ public:
 
 	// Should pEntity be moved through this portal this tick?
 	bool			ShouldTeleport( CBaseEntity *pEntity );
-	// Move an entity in front of this portal out of the linked one.
-	bool			TeleportEntity( CBaseEntity *pEntity );
+	// Move an entity in front of this portal out of the linked one. bExact
+	// maps it exactly (a prop straddling the plane stays straddling the exit)
+	// instead of placing it clear of the exit.
+	bool			TeleportEntity( CBaseEntity *pEntity, bool bExact = false );
+
+	// Smooth prop crossing: a physics prop whose cross-section fits the hole
+	// stops colliding with the world and moves through the plane; it's moved
+	// to the other side when its center crosses (still straddling), and
+	// collides with the world again once it's clear of the exit. The client
+	// draws a copy at the other portal while it's part way through.
+	bool			CanCrossSmoothly( CBaseEntity *pEntity );
+	void			StartCrossing( CBaseEntity *pEntity );
+	static bool		IsCrossing( CBaseEntity *pEntity );
+	static int		GetCrossingCount();
+	static void		UpdateCrossings();
 
 	// Add the far sides of portals the viewer can see to the PVS.
 	static void		AddPortalsToPVS( unsigned char *pvs, int pvssize );

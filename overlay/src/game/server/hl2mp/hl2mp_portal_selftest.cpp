@@ -19,6 +19,8 @@
 #include "usercmd.h"
 #include "in_buttons.h"
 #include "explode.h"
+#include "physics_shared.h"
+#include "world.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -53,6 +55,10 @@ public:
 		m_flLastZ = m_flLastTime = 0.0f;
 		m_flScenarioClosestF = m_flScenarioClosestW = FLT_MAX;
 		m_nSnapsBefore = m_nBoxTeleportsBefore = 0;
+		m_nSmoothTeleportsBefore = 0;
+		m_bSmoothCrossing = m_bSmoothNoWorld = false;
+		m_flSmoothPre = m_flSmoothPost = FLT_MAX;
+		m_flSmoothSupportIn = m_flSmoothSupportOut = 0.0f;
 	}
 
 	virtual void LevelInitPostEntity()
@@ -79,6 +85,7 @@ public:
 		}
 
 		DriveBot();
+		TrackSmoothBox();
 
 		// Things that go through and then blow up or fly off: note it while they exist.
 		if ( m_hRocket && CHL2MPPortal::WasTeleported( m_hRocket ) )
@@ -244,6 +251,42 @@ private:
 		trace_t tr;
 		UTIL_TraceHull( vecPoint + Vector( 0, 0, 32 ), vecPoint - Vector( 0, 0, 160 ), VEC_HULL_MIN, VEC_HULL_MAX, MASK_PLAYERSOLID, m_hBot, COLLISION_GROUP_PLAYER_MOVEMENT, &tr );
 		return tr.endpos;
+	}
+
+	// The smooth crossing box: how far its center is in front of the wall
+	// portal each tick until it's moved across, and of the floor portal right
+	// after (and how far the box reaches along each normal).
+	void TrackSmoothBox()
+	{
+		CBaseEntity *pBox = m_hSmoothBox;
+		if ( !pBox || !m_hWall || !m_hFloor )
+			return;
+
+		if ( CHL2MPPortal::IsCrossing( pBox ) )
+		{
+			m_bSmoothCrossing = true;
+			if ( PhysEntityCollisionsAreDisabled( GetWorldEntity(), pBox ) )
+				m_bSmoothNoWorld = true;
+		}
+
+		Vector vecMins, vecMaxs;
+		pBox->CollisionProp()->WorldSpaceAABB( &vecMins, &vecMaxs );
+		Vector vecCenter = ( vecMins + vecMaxs ) * 0.5f;
+		Vector vecHalf = ( vecMaxs - vecMins ) * 0.5f;
+		int nTeleports = CHL2MPPortal::CountTeleports( pBox ) - m_nSmoothTeleportsBefore;
+		if ( nTeleports == 0 )
+		{
+			Vector vecNormal = m_hWall->GetSurfaceNormal();
+			m_flSmoothPre = DotProduct( vecNormal, vecCenter - m_hWall->GetAbsOrigin() );
+			m_flSmoothSupportIn = fabs( vecNormal.x ) * vecHalf.x + fabs( vecNormal.y ) * vecHalf.y + fabs( vecNormal.z ) * vecHalf.z;
+		}
+		else if ( nTeleports == 1 && m_flSmoothPost == FLT_MAX )
+		{
+			Vector vecNormal = m_hFloor->GetSurfaceNormal();
+			m_flSmoothPost = DotProduct( vecNormal, vecCenter - m_hFloor->GetAbsOrigin() );
+			m_flSmoothSupportOut = fabs( vecNormal.x ) * vecHalf.x + fabs( vecNormal.y ) * vecHalf.y + fabs( vecNormal.z ) * vecHalf.z;
+			Msg( "PORTALTEST info smooth box moved across: center %.1f in front of the entry, %.1f in front of the exit\n", m_flSmoothPre, m_flSmoothPost );
+		}
 	}
 
 	int BotSnaps()
@@ -890,6 +933,46 @@ private:
 			if ( m_hCrate )
 				UTIL_Remove( m_hCrate );
 
+			// Props slide through instead of popping out whole: throw a box into
+			// the wall portal and watch where it is when it's moved across.
+			CBaseEntity *pBox = CreateEntityByName( "prop_physics" );
+			pBox->SetAbsOrigin( m_hWall->GetAbsOrigin() + m_hWall->GetSurfaceNormal() * 60.0f );
+			pBox->KeyValue( "model", "models/props_junk/cardboard_box001a.mdl" );
+			pBox->Precache();
+			DispatchSpawn( pBox );
+			pBox->Activate();
+			m_hSmoothBox = pBox;
+			m_nSmoothTeleportsBefore = CHL2MPPortal::CountTeleports( pBox );
+			m_bSmoothCrossing = m_bSmoothNoWorld = false;
+			m_flSmoothPre = m_flSmoothPost = FLT_MAX;
+			m_flSmoothSupportIn = m_flSmoothSupportOut = 0.0f;
+			// Into the portal, rising a little against the drop on the way.
+			Vector vecThrow = -m_hWall->GetSurfaceNormal() * 300.0f + Vector( 0, 0, 60 );
+			IPhysicsObject *pPhys = pBox->VPhysicsGetObject();
+			if ( pPhys )
+			{
+				pPhys->SetVelocity( &vecThrow, NULL );
+				pPhys->Wake();
+			}
+			// It comes out of the floor portal going up; check before it falls back in.
+			Wait( 0.8f );
+			return;
+		}
+
+		case 21:
+		{
+			CBaseEntity *pBox = m_hSmoothBox;
+			bool bReleased = pBox && !CHL2MPPortal::IsCrossing( pBox ) && !PhysEntityCollisionsAreDisabled( GetWorldEntity(), pBox );
+			// Moved across while part way through both planes, not clear of them.
+			bool bStraddled = m_flSmoothPre < m_flSmoothSupportIn && fabs( m_flSmoothPost ) < m_flSmoothSupportOut;
+			Result( "prop_crosses_smoothly", pBox && m_bSmoothCrossing && m_bSmoothNoWorld && bStraddled && bReleased,
+				"crossing=%d world_off=%d center_before=%.1f (half %.1f) center_after=%.1f (half %.1f) released=%d crossings_left=%d",
+				m_bSmoothCrossing, m_bSmoothNoWorld, m_flSmoothPre, m_flSmoothSupportIn, m_flSmoothPost, m_flSmoothSupportOut, bReleased,
+				CHL2MPPortal::GetCrossingCount() );
+			if ( pBox )
+				UTIL_Remove( pBox );
+			m_hSmoothBox = NULL;
+
 			// Bug report: two floor portals: you go higher and higher. Move the
 			// wall portal onto the floor nearby and drop the bot into one.
 			Vector vecRight, vecUp;
@@ -927,7 +1010,7 @@ private:
 			return;
 		}
 
-		case 21:
+		case 22:
 		{
 			m_flLoopStart = -1.0f;
 			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
@@ -979,6 +1062,10 @@ private:
 	float	m_flTickLogUntil;	// exit speed is measured near this portal (default floor)
 	float	m_flFastFallMin;
 	EHANDLE	m_hBlocker;
+	EHANDLE	m_hSmoothBox;
+	int		m_nSmoothTeleportsBefore;
+	bool	m_bSmoothCrossing, m_bSmoothNoWorld;
+	float	m_flSmoothPre, m_flSmoothPost, m_flSmoothSupportIn, m_flSmoothSupportOut;
 };
 
 static CHL2MPPortalSelfTest g_HL2MPPortalSelfTest;

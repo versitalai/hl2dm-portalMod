@@ -1,8 +1,13 @@
 # Roadmap and known limitations
 
 ## Known limitations
-- **Props and projectiles** are caught in front of the wall and moved, not carved through it (players do walk into
-  axis-aligned portals). So a prop is never "half through" a portal.
+- **Projectiles** are caught in front of the wall and moved, not carved through it. Players walk into axis-aligned
+  portals and physics props slide through them; held objects, ragdolls, props wider than the hole and portals on
+  slopes still pop through whole.
+- **Sliding props ignore the world, not other props**: a prop part way through doesn't collide with the world at all
+  (so nothing next to the hole stops it either), and a prop or static prop in the way on the exit side blocks it
+  (it backs out after 4 s). Portal clones the geometry around the exit instead.
+- **The copy of a sliding prop** is drawn without shadows, and only the prop's own model (no attached effects).
 - **Big things fit anyway.** Only the center has to cross inside the ellipse; a prop wider than the portal still goes.
 - **Two live views per frame** (render target count). More open portals on screen draw as solid tinted ovals.
 - **One level of recursion** (High only). A portal inside a portal inside a portal is solid color.
@@ -17,9 +22,6 @@
 - **Placement is server-only**, so a laggy client sees its portal appear after a round trip.
 - **Content reuse.** Gun uses the gravity gun models/sounds and HUD icon. Portals are drawn procedurally.
 - Players at portals on sloped surfaces snap through on the server, unpredicted.
-- **Props pop through** (the whole prop at once), they don't slide through: VPhysics keeps the wall around the hole
-  solid. Smooth crossing needs Portal-style physics carving (a physics copy of the geometry around each portal). Held
-  props no longer flip back and forth.
 - **Linux installs don't self-update** (`update.bat` is Windows only); rerun `install.sh` from a new release.
 - **Explosion effects** (fireball, sound) stay on the blast's side; the damage and its push go through.
 - **Blocked-exit check uses one hull test** centered on the exit hole: a hole blocked only off-center still lets you in,
@@ -29,8 +31,8 @@
 
 ## Ideas / next steps
 1. Play-test pass: tune `sv_portal_lookahead`, exit gap, placement step; check prediction feel through portals.
-2. Collision carving: let entities partially enter (Portal's "portal simulator" approach: clone geometry around the
-   exit, disable world collision behind the entry).
+2. Full collision carving for props (Portal's "portal simulator": clone the geometry around the exit so a prop part
+   way through collides on both sides; today it ignores the world while sliding).
 3. Stencil-buffer rendering instead of render targets (exact, recursion-capable, no UV approximation).
 4. Portal-specific model, sounds, HUD icon, portal open/close particle effects.
 5. Teams: team-colored pairs, `mp_portal_*` server rules (friendly portals only, per-map disable via a `func_noportal`).

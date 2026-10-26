@@ -17,9 +17,13 @@
 	#include "view.h"
 	#include "c_world.h"
 	#include "hl2mp_hud_chat.h"
+	#include "igamesystem.h"
+	#include "model_types.h"
 #else
 	#include "world.h"
 	#include "vphysics/player_controller.h"
+	#include "physics_shared.h"
+	#include "igamesystem.h"
 #endif
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -31,6 +35,7 @@
 #ifdef GAME_DLL
 ConVar sv_portal_debug( "sv_portal_debug", "0", FCVAR_CHEAT, "Draw portal teleport volumes and placement traces." );
 ConVar sv_portal_lookahead( "sv_portal_lookahead", "3", FCVAR_NONE, "How many ticks ahead fast movers are caught before they would hit the portal surface." );
+ConVar sv_portal_smooth_props( "sv_portal_smooth_props", "1", FCVAR_NONE, "Physics props that fit the hole slide through portals (0 = they pop through whole)." );
 ConVar sv_portal_cooldown( "sv_portal_cooldown", "0.05", FCVAR_NONE, "Seconds before an entity that just went through a portal can go through again." );
 #endif
 
@@ -1046,6 +1051,10 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	if ( !pEntity || pEntity == this || pEntity->IsWorld() )
 		return false;
 
+	// Already sliding through a portal; the crossing moves it.
+	if ( IsCrossing( pEntity ) )
+		return false;
+
 	if ( pEntity->IsMarkedForDeletion() || pEntity->GetMoveParent() )
 		return false;
 
@@ -1148,7 +1157,7 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	return IsPointInEllipse( vCross );
 }
 
-bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity )
+bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity, bool bExact )
 {
 	CHL2MPPortal *pLinked = GetLinkedPortal();
 	if ( !pLinked )
@@ -1206,54 +1215,61 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity )
 		vOffset = ( vRotMins + vRotMaxs ) * 0.5f;
 	}
 
-	// The transformed center is behind the exit plane; bring it out in front.
-	float flExtent = BoxSupport( vHalf, vExitForward );
-	float flDist = DotProduct( vExitForward, vNewCenter - pLinked->GetAbsOrigin() );
-	vNewCenter += vExitForward * ( flExtent + PORTAL_EXIT_GAP - flDist );
-
-	// Find a spot that's not in a wall/floor: as is, centered on the portal,
-	// then raised (wall portals near the floor).
-	Vector vCentered = pLinked->GetAbsOrigin() + vExitForward * ( flExtent + PORTAL_EXIT_GAP );
-	Vector vCandidates[] =
+	// Crossing smoothly: exactly where it maps to, straddling the exit plane.
+	// Otherwise bring it out in front of the exit, clear of walls and floors.
+	if ( !bExact )
 	{
-		vNewCenter,
-		vCentered,
-		vNewCenter + Vector( 0, 0, 16 ),
-		vNewCenter + Vector( 0, 0, 32 ),
-		vCentered + Vector( 0, 0, 16 ),
-		vCentered + Vector( 0, 0, 32 ),
-		vCentered - Vector( 0, 0, 16 ),
-	};
+		// The transformed center is behind the exit plane; bring it out in front.
+		float flExtent = BoxSupport( vHalf, vExitForward );
+		float flDist = DotProduct( vExitForward, vNewCenter - pLinked->GetAbsOrigin() );
+		vNewCenter += vExitForward * ( flExtent + PORTAL_EXIT_GAP - flDist );
 
-	unsigned int mask = pEntity->PhysicsSolidMaskForEntity();
-	bool bFound = false;
-	for ( int i = 0; i < ARRAYSIZE( vCandidates ); i++ )
-	{
-		// Never put it behind the exit plane.
-		if ( DotProduct( vExitForward, vCandidates[i] - pLinked->GetAbsOrigin() ) < flExtent )
-			continue;
-
-		trace_t tr;
-		UTIL_TraceHull( vCandidates[i], vCandidates[i], -vHalf, vHalf, mask, pEntity, pEntity->GetCollisionGroup(), &tr );
-		if ( !tr.startsolid && !tr.allsolid )
+		// Find a spot that's not in a wall/floor: as is, centered on the portal,
+		// then raised (wall portals near the floor).
+		Vector vCentered = pLinked->GetAbsOrigin() + vExitForward * ( flExtent + PORTAL_EXIT_GAP );
+		Vector vCandidates[] =
 		{
-			vNewCenter = vCandidates[i];
-			bFound = true;
-			break;
-		}
-	}
+			vNewCenter,
+			vCentered,
+			vNewCenter + Vector( 0, 0, 16 ),
+			vNewCenter + Vector( 0, 0, 32 ),
+			vCentered + Vector( 0, 0, 16 ),
+			vCentered + Vector( 0, 0, 32 ),
+			vCentered - Vector( 0, 0, 16 ),
+		};
 
-	if ( !bFound )
-	{
-		if ( sv_portal_debug.GetBool() )
+		unsigned int mask = pEntity->PhysicsSolidMaskForEntity();
+		bool bFound = false;
+		for ( int i = 0; i < ARRAYSIZE( vCandidates ); i++ )
 		{
-			NDebugOverlay::Box( vNewCenter, -vHalf, vHalf, 255, 0, 0, 32, 2.0f );
+			// Never put it behind the exit plane.
+			if ( DotProduct( vExitForward, vCandidates[i] - pLinked->GetAbsOrigin() ) < flExtent )
+				continue;
+
+			trace_t tr;
+			UTIL_TraceHull( vCandidates[i], vCandidates[i], -vHalf, vHalf, mask, pEntity, pEntity->GetCollisionGroup(), &tr );
+			if ( !tr.startsolid && !tr.allsolid )
+			{
+				vNewCenter = vCandidates[i];
+				bFound = true;
+				break;
+			}
 		}
-		return false;
+
+		if ( !bFound )
+		{
+			if ( sv_portal_debug.GetBool() )
+			{
+				NDebugOverlay::Box( vNewCenter, -vHalf, vHalf, 255, 0, 0, 32, 2.0f );
+			}
+			return false;
+		}
+
 	}
 
 	Vector vNewOrigin = vNewCenter - vOffset;
 	pEntity->Teleport( &vNewOrigin, &angNew, &vNewVelocity );
+	pEntity->IncrementInterpolationFrame();	// don't let clients slide it across the map
 
 	if ( pEntity->IsPlayer() )
 	{
@@ -1334,12 +1350,252 @@ void CHL2MPPortal::PortalThink( void )
 
 	for ( int i = 0; i < candidates.Count(); i++ )
 	{
-		if ( candidates[i].Get() )
+		CBaseEntity *pEntity = candidates[i].Get();
+		if ( !pEntity )
+			continue;
+		if ( CanCrossSmoothly( pEntity ) )
 		{
-			TeleportEntity( candidates[i].Get() );
+			StartCrossing( pEntity );
+		}
+		else
+		{
+			TeleportEntity( pEntity );
 		}
 	}
 }
+
+//-----------------------------------------------------------------------------
+// Smooth prop crossing
+//-----------------------------------------------------------------------------
+struct PortalCrossing_t
+{
+	EHANDLE					hEntity;
+	CHandle<CHL2MPPortal>	hPortal;	// the portal whose plane it straddles
+	float					flStart;
+	bool					bThrough;	// moved through already: leaving through hPortal
+	bool					bGravityOff;	// gravity turned off for it (restored at the end)
+};
+static CUtlVector<PortalCrossing_t> s_Crossings;
+
+static int FindCrossing( CBaseEntity *pEntity )
+{
+	FOR_EACH_VEC( s_Crossings, i )
+	{
+		if ( s_Crossings[i].hEntity.Get() == pEntity )
+			return i;
+	}
+	return -1;
+}
+
+bool CHL2MPPortal::IsCrossing( CBaseEntity *pEntity )
+{
+	return FindCrossing( pEntity ) >= 0;
+}
+
+int CHL2MPPortal::GetCrossingCount()
+{
+	return s_Crossings.Count();
+}
+
+bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
+{
+	if ( !sv_portal_smooth_props.GetBool() || !CanCarve() || IsCrossing( pEntity ) )
+		return false;
+	if ( pEntity->IsPlayer() || pEntity->GetMoveType() != MOVETYPE_VPHYSICS )
+		return false;
+
+	// One rigid body (not a ragdoll), free to move.
+	IPhysicsObject *pList[2];
+	if ( pEntity->VPhysicsGetObjectList( pList, ARRAYSIZE( pList ) ) != 1 || !pList[0]->IsMoveable() )
+		return false;
+
+	// Held objects go where the hold point goes (turned to the carry angles,
+	// steered into the hole), not straight through; backing one out of a
+	// crossing jumps it away from the hold point and the grab breaks. They
+	// pop through as before.
+	if ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD )
+		return false;
+
+	// Heading in (or lying on a floor portal, which gravity pulls it into).
+	// Something resting against a wall portal goes through whole: it would
+	// sit half in the wall with nothing moving it.
+	Vector vForward = GetSurfaceNormal();
+	Vector vVelocity;
+	AngularImpulse angVelocity;
+	pList[0]->GetVelocity( &vVelocity, &angVelocity );
+	if ( DotProduct( vVelocity, vForward ) > -1.0f && vForward.z < 0.7f )
+		return false;
+
+	// Its cross-section fits the hole, and there's room for it out of the other portal.
+	Vector vMins, vMaxs;
+	pEntity->CollisionProp()->WorldSpaceAABB( &vMins, &vMaxs );
+	Vector vCenter = ( vMins + vMaxs ) * 0.5f;
+	Vector vHalf = ( vMaxs - vMins ) * 0.5f;
+	return HullFitsHole( vCenter, vHalf ) && GetLinkedPortal()->HasRoomForHull( -vHalf, vHalf, pEntity );
+}
+
+void CHL2MPPortal::StartCrossing( CBaseEntity *pEntity )
+{
+	IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
+	if ( !pPhys )
+		return;
+
+	PortalCrossing_t crossing;
+	crossing.hEntity = pEntity;
+	crossing.hPortal = this;
+	crossing.flStart = gpGlobals->curtime;
+	crossing.bThrough = false;
+	crossing.bGravityOff = false;
+	s_Crossings.AddToTail( crossing );
+
+	// The wall around and behind the hole stops blocking it.
+	PhysDisableEntityCollisions( g_PhysWorldObject, pPhys );
+	pPhys->Wake();
+}
+
+// Collide with the world again; bPushOut first moves it clear of the portal
+// it's in (giving up on a crossing that went wrong).
+static void EndCrossing( int iCrossing, bool bPushOut )
+{
+	PortalCrossing_t crossing = s_Crossings[iCrossing];
+	s_Crossings.Remove( iCrossing );
+
+	CBaseEntity *pEntity = crossing.hEntity;
+	IPhysicsObject *pPhys = pEntity ? pEntity->VPhysicsGetObject() : NULL;
+	if ( !pPhys )
+		return;
+
+	CHL2MPPortal *pPortal = crossing.hPortal;
+	if ( bPushOut && pPortal )
+	{
+		Vector vMins, vMaxs;
+		pEntity->CollisionProp()->WorldSpaceAABB( &vMins, &vMaxs );
+		Vector vForward = pPortal->GetSurfaceNormal();
+		float flGap = DotProduct( vForward, ( vMins + vMaxs ) * 0.5f - pPortal->GetAbsOrigin() ) - BoxSupport( ( vMaxs - vMins ) * 0.5f, vForward );
+		if ( flGap < 1.0f )
+		{
+			Vector vOrigin = pEntity->GetAbsOrigin() + vForward * ( 1.0f - flGap );
+			pEntity->Teleport( &vOrigin, NULL, NULL );
+		}
+	}
+
+	PhysEnableEntityCollisions( g_PhysWorldObject, pPhys );
+	if ( crossing.bGravityOff )
+	{
+		pPhys->EnableGravity( true );
+	}
+	pPhys->Wake();
+}
+
+void CHL2MPPortal::UpdateCrossings()
+{
+	for ( int i = s_Crossings.Count() - 1; i >= 0; i-- )
+	{
+		PortalCrossing_t &crossing = s_Crossings[i];
+		CBaseEntity *pEntity = crossing.hEntity;
+		IPhysicsObject *pPhys = pEntity ? pEntity->VPhysicsGetObject() : NULL;
+		if ( !pPhys || pEntity->IsMarkedForDeletion() )
+		{
+			s_Crossings.Remove( i );
+			continue;
+		}
+
+		CHL2MPPortal *pPortal = crossing.hPortal;
+		if ( !pPortal || !pPortal->IsOpen() )
+		{
+			EndCrossing( i, true );
+			continue;
+		}
+
+		Vector vMins, vMaxs;
+		pEntity->CollisionProp()->WorldSpaceAABB( &vMins, &vMaxs );
+		Vector vCenter = ( vMins + vMaxs ) * 0.5f;
+		Vector vHalf = ( vMaxs - vMins ) * 0.5f;
+		Vector vForward = pPortal->GetSurfaceNormal();
+		float flCenterDist = DotProduct( vForward, vCenter - pPortal->GetAbsOrigin() );
+		float flGap = flCenterDist - BoxSupport( vHalf, vForward );
+
+		Vector vVelocity;
+		AngularImpulse angVelocity;
+		pPhys->GetVelocity( &vVelocity, &angVelocity );
+		float flOutSpeed = DotProduct( vVelocity, vForward );
+
+		// Picked up part way through: it goes across only once the spot it's
+		// held at is past the plane too (as in ShouldTeleport). The hold keeps
+		// it hovering at the plane otherwise, flipping between the portals.
+		bool bHeldBack = false;
+		Vector vecHeldTarget;
+		if ( ( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) && PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
+			DotProduct( vForward, vecHeldTarget - pPortal->GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST )
+		{
+			bHeldBack = true;
+		}
+
+		// Center through: carry it to the other side, still straddling.
+		if ( flCenterDist < 0.0f && !bHeldBack )
+		{
+			if ( pPortal->TeleportEntity( pEntity, true ) )
+			{
+				crossing.hPortal = pPortal->GetLinkedPortal();
+				crossing.bThrough = true;
+			}
+			else
+			{
+				EndCrossing( i, true );
+			}
+			continue;
+		}
+
+		// Clear of the plane (as far out as a teleport puts things, past touching
+		// it again): done. Before going through, only once it's heading away
+		// again (it's caught a little before it arrives).
+		if ( flGap >= PORTAL_EXIT_GAP && ( crossing.bThrough || flOutSpeed > 1.0f ) )
+		{
+			EndCrossing( i, false );
+			continue;
+		}
+
+		// Turned or pulled out of line with the hole, or stuck: back out.
+		if ( ( flGap < 0.0f && !pPortal->HullFitsHole( vCenter, vHalf ) ) || gpGlobals->curtime - crossing.flStart > 4.0f )
+		{
+			EndCrossing( i, true );
+			continue;
+		}
+
+		// Straight through: no drift toward the walls around the hole (they
+		// don't stop it now) and no spin that would swing it into them. Gravity
+		// only acts along a floor or ceiling portal's normal; through a wall
+		// portal it would sink it into the bottom of the hole. A held object
+		// follows its holder instead.
+		if ( !( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
+		{
+			Vector vStraight = vForward * flOutSpeed;
+			AngularImpulse angNone( 0, 0, 0 );
+			pPhys->SetVelocity( &vStraight, &angNone );
+
+			bool bSideways = fabs( vForward.z ) < 0.7f;
+			if ( bSideways && !crossing.bGravityOff && pPhys->IsGravityEnabled() )
+			{
+				pPhys->EnableGravity( false );
+				crossing.bGravityOff = true;
+			}
+			else if ( !bSideways && crossing.bGravityOff )
+			{
+				pPhys->EnableGravity( true );
+				crossing.bGravityOff = false;
+			}
+		}
+	}
+}
+
+class CHL2MPPortalCrossingSystem : public CAutoGameSystemPerFrame
+{
+public:
+	CHL2MPPortalCrossingSystem() : CAutoGameSystemPerFrame( "CHL2MPPortalCrossingSystem" ) {}
+	virtual void FrameUpdatePostEntityThink() { CHL2MPPortal::UpdateCrossings(); }
+	virtual void LevelShutdownPreEntity() { s_Crossings.RemoveAll(); }
+};
+static CHL2MPPortalCrossingSystem g_HL2MPPortalCrossingSystem;
 
 void CHL2MPPortal::AddPortalsToPVS( unsigned char *pvs, int pvssize )
 {
@@ -1832,5 +2088,178 @@ int C_HL2MPPortal::DrawModel( int flags )
 	DrawPortalRim( vCenter + vForward * 0.1f, vRight, vUp, rimColor );
 	return 1;
 }
+
+
+//-----------------------------------------------------------------------------
+// Smooth prop crossing: while a physics prop is part way through a portal (the
+// server lets it slide through the plane), a copy of it is drawn at the linked
+// portal, mapped through. Each portal's surface hides what's behind its plane:
+// the part of the prop that has gone in, and the part of the copy that hasn't
+// come out yet. The two halves look like one prop sliding through. When the
+// prop's center crosses, the server moves it to the other side and the copy
+// takes its old place, so nothing visibly jumps.
+//-----------------------------------------------------------------------------
+ConVar cl_portal_prop_clones( "cl_portal_prop_clones", "1", FCVAR_ARCHIVE, "Draw the part of a prop that's gone into a portal coming out of the other one." );
+
+// Is the prop's (oriented) box through pPortal's plane by more than flDepth
+// on both sides, with its center in line with the hole? A negative flDepth
+// also accepts props up to that far from the plane.
+static bool PropStraddlesPortal( C_BaseEntity *pEntity, C_HL2MPPortal *pPortal, float flDepth )
+{
+	Vector vForward = pPortal->GetSurfaceNormal();
+	const matrix3x4_t &matEntity = pEntity->EntityToWorldTransform();
+	Vector vObbMins = pEntity->CollisionProp()->OBBMins();
+	Vector vObbMaxs = pEntity->CollisionProp()->OBBMaxs();
+	Vector vHalf = ( vObbMaxs - vObbMins ) * 0.5f;
+	Vector vCenter;
+	VectorTransform( ( vObbMins + vObbMaxs ) * 0.5f, matEntity, vCenter );
+
+	Vector vLocalForward;
+	VectorIRotate( vForward, matEntity, vLocalForward );
+	float flSupport = fabs( vLocalForward.x ) * vHalf.x + fabs( vLocalForward.y ) * vHalf.y + fabs( vLocalForward.z ) * vHalf.z;
+	float flDist = DotProduct( vForward, vCenter - pPortal->GetAbsOrigin() );
+	if ( flDist - flSupport > -flDepth || flDist + flSupport < flDepth )
+		return false;
+
+	return pPortal->IsPointInEllipse( vCenter - vForward * flDist, 1.2f );
+}
+
+class C_HL2MPPortalPropClone : public C_BaseAnimating
+{
+public:
+	DECLARE_CLASS( C_HL2MPPortalPropClone, C_BaseAnimating );
+
+	C_HL2MPPortalPropClone() : m_bVisible( false ), m_bSeen( false ) {}
+
+	virtual bool			ShouldDraw() { return m_bVisible; }
+	virtual ShadowType_t	ShadowCastType() { return SHADOWS_NONE; }
+	virtual bool			ShouldReceiveProjectedTextures( int flags ) { return false; }
+
+	// Runs every frame after interpolation: follow the prop as it's drawn.
+	virtual void Simulate()
+	{
+		m_bVisible = false;
+		C_BaseEntity *pSource = m_hSource;
+		C_HL2MPPortal *pPortal = m_hPortal;
+		if ( !pSource || !pPortal || !pPortal->IsOpen() || pSource->IsDormant() || pSource->IsEffectActive( EF_NODRAW ) )
+			return;
+		// Either portal of the pair: the frame the server moves the prop to the
+		// other side, the copy has to swap sides with it.
+		if ( !PropStraddlesPortal( pSource, pPortal, 0.5f ) )
+		{
+			pPortal = pPortal->GetLinkedPortal();
+			if ( !pPortal || !PropStraddlesPortal( pSource, pPortal, 0.5f ) )
+				return;
+		}
+
+		if ( GetModelIndex() != pSource->GetModelIndex() )
+		{
+			SetModelIndex( pSource->GetModelIndex() );
+		}
+		C_BaseAnimating *pAnimating = pSource->GetBaseAnimating();
+		if ( pAnimating )
+		{
+			m_nSkin = pAnimating->m_nSkin;
+			m_nBody = pAnimating->m_nBody;
+		}
+		SetRenderColor( pSource->GetRenderColor().r, pSource->GetRenderColor().g, pSource->GetRenderColor().b );
+
+		matrix3x4_t matClone;
+		ConcatTransforms( pPortal->MatrixThisToLinked().As3x4(), pSource->EntityToWorldTransform(), matClone );
+		QAngle angles;
+		Vector vOrigin;
+		MatrixAngles( matClone, angles, vOrigin );
+		SetAbsOrigin( vOrigin );
+		SetAbsAngles( angles );
+		m_bVisible = true;
+	}
+
+	EHANDLE					m_hSource;
+	CHandle<C_HL2MPPortal>	m_hPortal;		// the portal (or its partner) the source is going through
+	bool					m_bVisible;
+	bool					m_bSeen;		// still needed (manager bookkeeping)
+};
+
+// Keeps one copy per prop and portal pair it's at, made a little before the
+// prop reaches the plane so it's there for the first frame it's through.
+class C_HL2MPPortalCloneSystem : public CAutoGameSystemPerFrame
+{
+public:
+	C_HL2MPPortalCloneSystem() : CAutoGameSystemPerFrame( "C_HL2MPPortalCloneSystem" ) {}
+
+	virtual void Update( float frametime )
+	{
+		FOR_EACH_VEC( m_Clones, i )
+		{
+			m_Clones[i]->m_bSeen = false;
+		}
+
+		if ( cl_portal_prop_clones.GetBool() && CHL2MPPortal::GetPortalCount() > 0 )
+		{
+			C_BaseEntityIterator iterator;
+			C_BaseEntity *pEntity;
+			while ( ( pEntity = iterator.Next() ) != NULL )
+			{
+				if ( pEntity->GetMoveType() != MOVETYPE_VPHYSICS || pEntity->IsPlayer() || pEntity->IsDormant() || !pEntity->GetModel() ||
+					modelinfo->GetModelType( pEntity->GetModel() ) != mod_studio )
+					continue;
+
+				for ( int i = 0; i < CHL2MPPortal::GetPortalCount(); i++ )
+				{
+					C_HL2MPPortal *pPortal = CHL2MPPortal::GetPortal( i );
+					if ( pPortal->IsDormant() || !pPortal->IsOpen() || !pPortal->CanCarve() || !PropStraddlesPortal( pEntity, pPortal, -24.0f ) )
+						continue;
+					KeepClone( pEntity, pPortal );
+				}
+			}
+		}
+
+		for ( int i = m_Clones.Count() - 1; i >= 0; i-- )
+		{
+			if ( !m_Clones[i]->m_bSeen )
+			{
+				m_Clones[i]->Release();
+				m_Clones.Remove( i );
+			}
+		}
+	}
+
+	virtual void LevelShutdownPreEntity()
+	{
+		FOR_EACH_VEC( m_Clones, i )
+		{
+			m_Clones[i]->Release();
+		}
+		m_Clones.RemoveAll();
+	}
+
+private:
+	void KeepClone( C_BaseEntity *pEntity, C_HL2MPPortal *pPortal )
+	{
+		FOR_EACH_VEC( m_Clones, i )
+		{
+			C_HL2MPPortal *pClonePortal = m_Clones[i]->m_hPortal;
+			if ( m_Clones[i]->m_hSource.Get() == pEntity && pClonePortal && ( pClonePortal == pPortal || pClonePortal == pPortal->GetLinkedPortal() ) )
+			{
+				m_Clones[i]->m_bSeen = true;
+				return;
+			}
+		}
+
+		C_HL2MPPortalPropClone *pClone = new C_HL2MPPortalPropClone;
+		if ( !pClone->InitializeAsClientEntity( modelinfo->GetModelName( pEntity->GetModel() ), RENDER_GROUP_OPAQUE_ENTITY ) )
+		{
+			pClone->Release();
+			return;
+		}
+		pClone->m_hSource = pEntity;
+		pClone->m_hPortal = pPortal;
+		pClone->m_bSeen = true;
+		m_Clones.AddToTail( pClone );
+	}
+
+	CUtlVector<C_HL2MPPortalPropClone *> m_Clones;
+};
+static C_HL2MPPortalCloneSystem g_HL2MPPortalCloneSystem;
 
 #endif // CLIENT_DLL
