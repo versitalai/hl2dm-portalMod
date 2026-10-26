@@ -331,6 +331,11 @@ private:
 		bool bFloor = LocalWorldSolidAt( m_hFloor, vecFloorThere );
 		bool bAir = !LocalWorldSolidAt( m_hFloor, vecAirThere );
 		Result( "local_world_other_side", bFloor && bAir, "floor_copied=%d air_copied=%d", bFloor, bAir );
+
+		// The same worlds as static physics objects, for props crossing through.
+		int nWallObjects = HL2MPPortalWorld_SyncCollider( m_hWall );
+		int nFloorObjects = HL2MPPortalWorld_SyncCollider( m_hFloor );
+		Result( "prop_collider_built", nWallObjects > 0 && nFloorObjects > 0, "wall_objects=%d floor_objects=%d", nWallObjects, nFloorObjects );
 	}
 
 	int BotSnaps()

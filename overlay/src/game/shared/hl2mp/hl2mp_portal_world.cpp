@@ -52,6 +52,11 @@ struct PortalWorldCollide_t
 	QAngle			angAngles;
 };
 
+#ifdef GAME_DLL
+class CHL2MPPortalCollider;
+static void DestroyColliderObjects( CHL2MPPortalWorld *pWorld );
+#endif
+
 class CHL2MPPortalWorld
 {
 public:
@@ -60,6 +65,10 @@ public:
 
 	void Clear()
 	{
+#ifdef GAME_DLL
+		// The collider's physics objects use these collides.
+		DestroyColliderObjects( this );
+#endif
 		FOR_EACH_VEC( m_Collides, i )
 		{
 			if ( m_Collides[i].bOwned )
@@ -77,6 +86,9 @@ public:
 	CUtlVector<PortalWorldCollide_t> m_Collides;
 	int		m_nLocalPieces, m_nRemotePieces, m_nStaticProps, m_nDisplacements;
 	unsigned int m_nChecksum;
+#ifdef GAME_DLL
+	CHandle<CHL2MPPortalCollider> m_hCollider;
+#endif
 };
 
 void HL2MPPortalWorld_Destroy( CHL2MPPortalWorld *pWorld )
@@ -481,3 +493,122 @@ static ConCommand cl_portal_world_info( "cl_portal_world_info", PrintPortalWorld
 #else
 static ConCommand sv_portal_world_info( "sv_portal_world_info", PrintPortalWorlds, "Print each portal's local collision world (as the server built it)." );
 #endif
+
+#ifdef GAME_DLL
+//-----------------------------------------------------------------------------
+// Props: the local world as static physics objects, which only props crossing
+// through the portal collide with (their collisions with the real world are
+// off while they cross). Nothing else touches it: it's not solid, and only
+// forces collisions with those props.
+//-----------------------------------------------------------------------------
+#define PORTAL_WORLD_PROP_CONTENTS	( CONTENTS_SOLID | CONTENTS_WINDOW | CONTENTS_GRATE )
+
+class CHL2MPPortalCollider : public CBaseEntity
+{
+public:
+	DECLARE_CLASS( CHL2MPPortalCollider, CBaseEntity );
+
+	virtual void Spawn()
+	{
+		BaseClass::Spawn();
+		SetSolid( SOLID_NONE );
+		SetMoveType( MOVETYPE_NONE );
+		AddEffects( EF_NODRAW );
+	}
+
+	virtual int UpdateTransmitState() { return SetTransmitState( FL_EDICT_DONTSEND ); }
+
+	virtual bool ForceVPhysicsCollide( CBaseEntity *pEntity )
+	{
+		return m_hPortal && CHL2MPPortal::IsCrossingThrough( pEntity, m_hPortal );
+	}
+
+	virtual void UpdateOnRemove()
+	{
+		DestroyObjects();
+		BaseClass::UpdateOnRemove();
+	}
+
+	void DestroyObjects()
+	{
+		FOR_EACH_VEC( m_Objects, i )
+		{
+			if ( physenv )
+			{
+				physenv->DestroyObject( m_Objects[i] );
+			}
+		}
+		m_Objects.RemoveAll();
+		m_bBuilt = false;
+	}
+
+	void Build( CHL2MPPortalWorld *pWorld )
+	{
+		DestroyObjects();
+		objectparams_t params = g_PhysDefaultObjectParams;
+		params.pGameData = static_cast<void *>( this );
+		int iSurface = physprops->GetSurfaceIndex( "default" );
+		FOR_EACH_VEC( pWorld->m_Collides, i )
+		{
+			const PortalWorldCollide_t &collide = pWorld->m_Collides[i];
+			if ( !( collide.iContents & PORTAL_WORLD_PROP_CONTENTS ) )
+				continue;
+			IPhysicsObject *pObject = physenv->CreatePolyObjectStatic( collide.pCollide, iSurface, collide.vecOrigin, collide.angAngles, &params );
+			if ( pObject )
+			{
+				m_Objects.AddToTail( pObject );
+			}
+		}
+		m_bBuilt = true;
+	}
+
+	CHandle<CHL2MPPortal>	m_hPortal;
+	CUtlVector<IPhysicsObject *> m_Objects;
+	bool					m_bBuilt;
+};
+LINK_ENTITY_TO_CLASS( hl2mp_portal_collider, CHL2MPPortalCollider );
+
+static void DestroyColliderObjects( CHL2MPPortalWorld *pWorld )
+{
+	CHL2MPPortalCollider *pCollider = pWorld->m_hCollider;
+	if ( pCollider )
+	{
+		pCollider->DestroyObjects();
+	}
+}
+
+int HL2MPPortalWorld_SyncCollider( CHL2MPPortal *pPortal )
+{
+	CHL2MPPortalWorld *pWorld = GetPortalWorld( pPortal );
+	if ( !pWorld )
+		return -1;
+
+	CHL2MPPortalCollider *pCollider = pWorld->m_hCollider;
+	if ( !pCollider )
+	{
+		pCollider = static_cast<CHL2MPPortalCollider *>( CreateEntityByName( "hl2mp_portal_collider" ) );
+		if ( !pCollider )
+			return -1;
+		pCollider->m_hPortal = pPortal;
+		pCollider->m_bBuilt = false;
+		pCollider->SetAbsOrigin( pPortal->GetAbsOrigin() );
+		DispatchSpawn( pCollider );
+		pWorld->m_hCollider = pCollider;
+	}
+	if ( !pCollider->m_bBuilt )
+	{
+		pCollider->Build( pWorld );
+	}
+	return pCollider->m_Objects.Count();
+}
+
+void HL2MPPortalWorld_RemoveCollider( CHL2MPPortal *pPortal )
+{
+	CHL2MPPortalWorld *pWorld = pPortal->LocalWorldStorage();
+	if ( pWorld && pWorld->m_hCollider )
+	{
+		UTIL_Remove( pWorld->m_hCollider );
+		pWorld->m_hCollider = NULL;
+	}
+}
+#endif // GAME_DLL

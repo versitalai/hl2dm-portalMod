@@ -4,9 +4,8 @@
 - **Projectiles** are caught in front of the wall and moved, not carved through it. Players walk into axis-aligned
   portals and physics props slide through them; held objects, ragdolls, props wider than the hole and portals on
   slopes still pop through whole.
-- **Sliding props ignore the world, not other props**: a prop part way through doesn't collide with the world at all
-  (so nothing next to the hole stops it either), and a prop or static prop in the way on the exit side blocks it
-  (it backs out after 4 s). Portal clones the geometry around the exit instead.
+- **Sliding props only meet things on their own side**: the local world gives a prop part way through the wall with
+  the hole and the world on the other side, but other props and players over there aren't in it (shadow copies would be).
 - **The copy of a sliding prop** is drawn without shadows, and only the prop's own model (no attached effects).
 - **Big things fit anyway.** Only the center has to cross inside the ellipse; a prop wider than the portal still goes.
 - **Two live views per frame** (render target count). More open portals on screen draw as solid tinted ovals.
@@ -31,7 +30,7 @@
 
 ## Ideas / next steps
 1. Play-test pass: tune `sv_portal_lookahead`, exit gap, placement step; check prediction feel through portals.
-2. Local collision world, next steps: props collide with it while crossing (today they ignore the world); remove the
+2. Local collision world, next steps: remove the
    split-hull fallback and the movement hacks it needed (forced crossing, exit push-out) once play-tested; shadow copies
    of entities near the exit so things half through hit what's on the other side; an ellipse-shaped hole for props.
    Older note: full collision carving for props (Portal's "portal simulator": clone the geometry around the exit so a prop part

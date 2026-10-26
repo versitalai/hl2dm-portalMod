@@ -110,6 +110,7 @@ public:
 
 #ifdef GAME_DLL
 	virtual int		UpdateTransmitState( void );
+	virtual void	UpdateOnRemove( void );
 	void			PortalThink( void );
 
 	// Place the portal; returns false if it doesn't fit on the surface.
@@ -126,13 +127,16 @@ public:
 	bool			TeleportEntity( CBaseEntity *pEntity, bool bExact = false );
 
 	// Smooth prop crossing: a physics prop whose cross-section fits the hole
-	// stops colliding with the world and moves through the plane; it's moved
-	// to the other side when its center crosses (still straddling), and
-	// collides with the world again once it's clear of the exit. The client
-	// draws a copy at the other portal while it's part way through.
+	// collides with the portal's local world instead of the real one (the
+	// wall has a hole, the other side is behind it); it's moved to the other
+	// side when its center crosses (still straddling, now in that portal's
+	// local world), and collides with the real world again once it's clear of
+	// the exit. The client draws a copy at the other portal while it's part
+	// way through.
 	bool			CanCrossSmoothly( CBaseEntity *pEntity );
 	void			StartCrossing( CBaseEntity *pEntity );
 	static bool		IsCrossing( CBaseEntity *pEntity );
+	static bool		IsCrossingThrough( CBaseEntity *pEntity, const CHL2MPPortal *pPortal );
 	static int		GetCrossingCount();
 	static void		UpdateCrossings();
 
@@ -245,6 +249,13 @@ bool HL2MPPortalWorld_Contains( const CHL2MPPortal *pPortal, const Vector &vecCe
 bool HL2MPPortalWorld_Trace( const CHL2MPPortal *pPortal, const Ray_t &ray, unsigned int mask, trace_t *pTrace );
 bool HL2MPPortalWorld_GetInfo( const CHL2MPPortal *pPortal, int *pLocalPieces, int *pRemotePieces, int *pStaticProps, int *pDisplacements, unsigned int *pChecksum );
 void HL2MPPortalWorld_Destroy( CHL2MPPortalWorld *pWorld );
+#ifdef GAME_DLL
+// Make sure the portal's prop collider (the local world as static physics
+// objects that only props crossing through it collide with) exists and is
+// up to date. Returns its object count, -1 if the portal has no local world.
+int HL2MPPortalWorld_SyncCollider( CHL2MPPortal *pPortal );
+void HL2MPPortalWorld_RemoveCollider( CHL2MPPortal *pPortal );
+#endif
 
 // Release version from the mod folder's version.txt ("dev" without one).
 const char *UTIL_HL2MPPortal_GetModVersion();

@@ -64,16 +64,23 @@ A prop goes through the hole a piece at a time instead of popping out whole (`sv
 `CanCrossSmoothly`: an axis-aligned portal, one moveable physics object (no ragdolls), not held (the grab controller
 turns and steers it, and backing it out of a crossing jumps it away from the hold point: `+use` drops it), its AABB
 footprint fits the hole, room for it out of the other portal, and heading in (or on a floor portal: gravity takes it in; a prop resting
-against a wall portal still pops through, it would sit half in the wall).
-- `StartCrossing` records it and turns off its collisions with the world (`PhysDisableEntityCollisions` with
-  `g_PhysWorldObject`): the wall around and behind the hole stops blocking it. Other props and players still do.
-- `UpdateCrossings` (a game system, every tick after entity think): while it's straddling, velocity is kept along the
-  portal normal and spin is stopped (it can't drift into the walls it no longer hits); through a wall portal gravity is
-  off (it would sink into the bottom of the hole). One picked up part way through follows the grab controller,
-  and goes across only once the hold point is 2 units past the plane (like `ShouldTeleport`; else it flips).
+against a wall portal still pops through), `sv_portal_local_world` on, and inside both portals' local worlds.
+- `StartCrossing` records it and swaps the world it collides with: collisions with the real world off
+  (`PhysDisableEntityCollisions` with `g_PhysWorldObject`), with the portal's local world on. The local world is
+  built as static physics objects by a server-only `hl2mp_portal_collider` entity per portal
+  (`HL2MPPortalWorld_SyncCollider`, solid, window and grate pieces). The collider isn't solid, so nothing else touches
+  it; `ForceVPhysicsCollide` makes only props crossing through its portal collide with it. So a crossing prop hits the
+  rim of the hole, lands on the floor on the other side, tumbles and slides normally. Other props and players still
+  collide as usual (only on their own side). Rebuilding a portal's local world destroys the collider's objects first
+  (they point at its collides).
+- `UpdateCrossings` (a game system, every tick after entity think) only decides when to hand over and when it's done.
+  One picked up part way through goes across only once the hold point is 2 units past the plane (like
+  `ShouldTeleport`; else it flips).
 - When its center crosses the plane, `TeleportEntity( bExact )` maps it exactly (still straddling, now the other
-  portal's plane) and the crossing continues there. It ends, world collisions back on, once it's 2 units clear of the
-  plane (moving away), or with a push-out if it turned out of line with the hole, a portal closed, or 4 s passed.
+  portal's plane) and it collides with that portal's collider instead. It ends, real world back on, once it's 2 units
+  clear of the plane (moving away), or if it wanders in front of the plane out of the region the local world covers.
+  A portal closing or moving with a prop part way through pushes it out in front. A prop that comes to rest part way
+  through stays crossing (it's resting on real geometry now).
 - Client: `C_HL2MPPortalCloneSystem` keeps a client-only copy (`C_HL2MPPortalPropClone`) of each physics prop within
   24 units of an open portal's plane, in line with the hole. Every frame after interpolation (`Simulate`) it's put at
   `M * prop` for whichever portal of the pair the prop is through, and drawn only while the prop is through the plane.
