@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.1 — unreleased
+## 0.5.1 — 2026-10-27
 
 ### Fixed
 - **Invisible wall at some portals (players and props).** The local collision world copies static props and
