@@ -172,6 +172,23 @@ moved along that portal's plane into the hole (`ClampBehindPointToHole`, ellipse
 instead of being pressed against the wall beside the hole. The gravity gun networks `m_nHeldPortalCount`; the client stops predicting the
 held object while it's non-zero. Only a chain deeper than 4 portals drops the object.
 
+### Interacting through portals
+
+Aim traces go through `UTIL_HL2MPPortal_TraceRay`, which can also return the portals entered (`pPortals`) and the
+path (`UTIL_HL2MPPortal_PathLength` gives its length, used for reach checks instead of `endpos - startpos`):
+- `+use` (`CBasePlayer::FindUseEntity`, HL2MP only): the line and hull traces go through portals. The portals used
+  for the pick are stashed (`HL2MPPortal_SetUsePortals`, same tick, same user and entity), and
+  `CPlayerPickupController::Init` seeds the grab controller with them (`CGrabController::SetPortals`, which also
+  maps the object's angles back to the holder's side so it doesn't spin on pickup). The radius search stays local.
+- Gravity gun (server): `FindObject` (attach/pull; attach range is path length), `CheckForTarget` (claws open), punt
+  (`PrimaryAttack`, shared: pushes along the exit direction). Pulling aims at the holder as seen from the object's
+  side, clamped into the exit hole. The cone search stays local.
+- SLAM placement (`SLAM_TraceAim`): mines stick to what's seen through a portal.
+- RPG: the laser dot is placed through portals and remembers them; a missile heads for each portal's hole in turn
+  (`CMissile::m_hPortalsPassed`, filled by `RPG_MissileWentThroughPortal` from `TeleportEntity`), then the dot.
+- Player names (client, `UpdateIDTarget`).
+Not done: flashlight, RPG beam drawing, gravity gun beam effects (cosmetic).
+
 ## Self-test (dedicated server)
 
 `hl2mp_portal_selftest.cpp` (`sv_portal_selftest 1`) runs on map load, prints `PORTALTEST <name> PASS|FAIL`, then
@@ -242,7 +259,11 @@ Classic render-to-texture portal, done with stock SDK pieces (no custom shaders,
 6. **Server side of it**: `CHL2MP_Player::SetupVisibility` adds the exit side of every open portal in the player's PVS,
    so entities over there are networked and actually show up in the view.
 
-Views run every frame, so what you see through a portal is live.
+Views run every frame, so what you see through a portal is live. `DrawHL2MPPortalViews` bumps the view stamps at
+the start of every frame, so a portal whose view wasn't rendered this frame draws solid rather than a stale image.
+Near the surface a **tunnel** (ellipse walls + cap, at least 16 deep, screen-space mapped like the surface) is drawn
+behind the plane: when the near plane clips the wall it keeps showing the far side, and a camera slightly behind
+the plane inside the hole still gets its view and the tunnel.
 
 ### Cost and quality levels
 

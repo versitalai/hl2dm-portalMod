@@ -103,6 +103,10 @@ ConVar cl_portal_render_views( "cl_portal_render_views", "1", FCVAR_ARCHIVE, "Re
 #define PORTAL_TOUCH_DIST		1.0f
 // How far past the plane a held object's hold point must be before it goes through.
 #define PORTAL_HELD_THROUGH_DIST	2.0f
+// How far past the plane a sliding prop's center must be before it's handed
+// to the other portal. It lands this far in front of that one, so going back
+// takes twice this: one at rest on the threshold doesn't flip every tick.
+#define PORTAL_CROSS_HYSTERESIS		1.0f
 // Depth of the detection volume in front of / behind the plane.
 #define PORTAL_DETECT_FRONT		160.0f
 #define PORTAL_DETECT_BACK		8.0f
@@ -428,7 +432,7 @@ bool CHL2MPPortal::GetHoleFitShift( const Vector &vecCenter, const Vector &vecHa
 }
 
 // What can block a portal's exit: anything a player can't push out of the
-// way. Loose physics props (a can, a held box) never do.
+// way. Loose physics props (a can, a held box) never do; frozen ones do.
 class CPortalExitFilter : public CTraceFilterSimple
 {
 public:
@@ -436,9 +440,18 @@ public:
 
 	virtual bool ShouldHitEntity( IHandleEntity *pHandleEntity, int contentsMask )
 	{
+		// Loose props get pushed out of the way (see PushPropOutOfExit); frozen
+		// ones block like a wall.
 		CBaseEntity *pEntity = EntityFromEntityHandle( pHandleEntity );
 		if ( pEntity && pEntity->GetMoveType() == MOVETYPE_VPHYSICS )
+		{
+#ifdef GAME_DLL
+			IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
+			if ( pPhys && !pPhys->IsMoveable() )
+				return CTraceFilterSimple::ShouldHitEntity( pHandleEntity, contentsMask );
+#endif
 			return false;
+		}
 		return CTraceFilterSimple::ShouldHitEntity( pHandleEntity, contentsMask );
 	}
 };
@@ -622,6 +635,33 @@ static bool TracePlayerHullLocalWorld( CHL2MPPortal *pPortal, const Vector &vecS
 	{
 		TraceBackPartThroughPortal( pPortal, vecStart, vecEnd, vecBackMins, vecBackMaxs, mask, &filter, &trBack );
 	}
+
+#ifdef GAME_DLL
+	// A loose prop in front of the exit, where the part of the player that's
+	// through would be: push it out of the way, as walking into it would.
+	// (The player's physics shadow is on this side and can't reach it.)
+	// Only while moving in: standing near the portal mustn't shove (or slow
+	// down) things flying past the exit.
+	bool bMovingIn = DotProduct( vecEnd - vecStart, pPortal->GetSurfaceNormal() ) < -0.01f;
+	if ( bMovingIn && ( trBack.fraction < 1.0f || trBack.startsolid ) && trBack.m_pEnt && trBack.m_pEnt->GetMoveType() == MOVETYPE_VPHYSICS )
+	{
+		IPhysicsObject *pPhys = trBack.m_pEnt->VPhysicsGetObject();
+		if ( pPhys && pPhys->IsMoveable() && !( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
+		{
+			Vector vecExitForward = pPortal->GetLinkedPortal()->GetSurfaceNormal();
+			Vector vecVelocity;
+			pPhys->GetVelocity( &vecVelocity, NULL );
+			float flOut = DotProduct( vecVelocity, vecExitForward );
+			const float flPushSpeed = 150.0f;
+			if ( flOut < flPushSpeed )
+			{
+				vecVelocity += vecExitForward * ( flPushSpeed - flOut );
+				pPhys->SetVelocity( &vecVelocity, NULL );
+			}
+			pPhys->Wake();
+		}
+	}
+#endif
 
 	// First hit wins; starting stuck in anything wins outright.
 	trace_t *pBest = &trWorld;
@@ -860,13 +900,69 @@ CHL2MPPortal *UTIL_HL2MPPortal_FindBlockedEntry( const Vector &vecOrigin, const 
 	return NULL;
 }
 
+#ifdef GAME_DLL
+static struct
+{
+	EHANDLE					hUser;
+	EHANDLE					hUsed;
+	CHandle<CHL2MPPortal>	hPortals[HL2MP_PORTAL_MAX_RECURSION];
+	int						nPortals;
+	int						nTick;
+} s_UsePortals;
+
+void HL2MPPortal_SetUsePortals( CBaseEntity *pUser, CBaseEntity *pUsed, const CUtlVector<CHL2MPPortal *> &portals )
+{
+	s_UsePortals.hUser = pUser;
+	s_UsePortals.hUsed = pUsed;
+	s_UsePortals.nPortals = MIN( portals.Count(), HL2MP_PORTAL_MAX_RECURSION );
+	for ( int i = 0; i < s_UsePortals.nPortals; i++ )
+	{
+		s_UsePortals.hPortals[i] = portals[i];
+	}
+	s_UsePortals.nTick = gpGlobals->tickcount;
+}
+
+int HL2MPPortal_GetUsePortals( CBaseEntity *pUser, CBaseEntity *pUsed, CHL2MPPortal **ppPortals, int nMax )
+{
+	if ( !pUser || s_UsePortals.hUser != pUser || s_UsePortals.nTick != gpGlobals->tickcount )
+		return 0;
+	// The prop used, or the entity it's parented to.
+	if ( !pUsed || ( s_UsePortals.hUsed != pUsed && s_UsePortals.hUsed != pUsed->GetRootMoveParent() ) )
+		return 0;
+
+	int nPortals = MIN( s_UsePortals.nPortals, nMax );
+	for ( int i = 0; i < nPortals; i++ )
+	{
+		ppPortals[i] = s_UsePortals.hPortals[i];
+		if ( !ppPortals[i] || !ppPortals[i]->IsOpen() )
+			return 0;
+	}
+	return nPortals;
+}
+#endif
+
+float UTIL_HL2MPPortal_PathLength( const CUtlVector<Vector> &path )
+{
+	float flLength = 0.0f;
+	for ( int i = 0; i + 1 < path.Count(); i += 2 )
+	{
+		flLength += ( path[i + 1] - path[i] ).Length();
+	}
+	return flLength;
+}
+
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut,
-	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath, ITraceFilter *pFilterAfterPortal )
+	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath, ITraceFilter *pFilterAfterPortal,
+	CUtlVector<CHL2MPPortal *> *pPortals )
 {
 	if ( pPath )
 	{
 		pPath->RemoveAll();
+	}
+	if ( pPortals )
+	{
+		pPortals->RemoveAll();
 	}
 
 	Vector vStart = vecStart;
@@ -926,6 +1022,11 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 		if ( pPath )
 		{
 			pPath->AddToTail( vHit );
+		}
+
+		if ( pPortals )
+		{
+			pPortals->AddToTail( pPortal );
 		}
 
 		VMatrix matToLinked = pPortal->MatrixThisToLinked();
@@ -1019,6 +1120,7 @@ static void GetPortalEntityVelocity( CBaseEntity *pEntity, Vector *pVelocity, An
 // Keep held objects held through portals (weapon_physcannon.cpp).
 extern bool PhysCannon_GetHeldObjectTarget( CBaseEntity *pObject, Vector *pTarget );
 extern void PhysCannon_HeldObjectWentThroughPortal( CBaseEntity *pObject, CHL2MPPortal *pPortal );
+extern void RPG_MissileWentThroughPortal( CBaseEntity *pEntity, CHL2MPPortal *pPortal );
 extern void PhysCannon_HolderWentThroughPortal( CBasePlayer *pPlayer, CHL2MPPortal *pPortal );
 
 
@@ -1254,16 +1356,18 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	if ( !pEntity->IsPlayer() && pEntity->GetMoveType() != MOVETYPE_VPHYSICS && vVelocity.LengthSqr() < 1.0f )
 		return false;
 
-	// A held object only goes through when the spot it's held at is past the
+	// A held object only pops through when the spot it's held at is past the
 	// plane. Otherwise the hold pulls it back against the exit, it touches
-	// that portal and flips back, over and over.
+	// that portal and flips back, over and over. Held at the plane, it slides
+	// into the hole instead (smooth crossing, below): against the real wall
+	// it was shoved back and forth between the hold and the wall.
+	bool bHeldShort = false;
 	IPhysicsObject *pHeldPhys = pEntity->VPhysicsGetObject();
 	if ( pEntity->GetMoveType() == MOVETYPE_VPHYSICS && pHeldPhys && ( pHeldPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
 	{
 		Vector vecHeldTarget;
-		if ( PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
-			DotProduct( vForward, vecHeldTarget - GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST )
-			return false;
+		bHeldShort = PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
+			DotProduct( vForward, vecHeldTarget - GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST;
 	}
 
 	bool bTouching = ( flGap <= PORTAL_TOUCH_DIST ) && ( flNormalSpeed <= 1.0f );
@@ -1279,7 +1383,9 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	}
 	vCross -= vForward * DotProduct( vForward, vCross - GetAbsOrigin() );
 
-	return IsPointInEllipse( vCross );
+	if ( !IsPointInEllipse( vCross ) )
+		return false;
+	return !bHeldShort || CanCrossSmoothly( pEntity );
 }
 
 bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity, bool bExact )
@@ -1405,6 +1511,7 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity, bool bExact )
 	{
 		// Still held (gravity gun or +use) on the other side.
 		PhysCannon_HeldObjectWentThroughPortal( pEntity, this );
+		RPG_MissileWentThroughPortal( pEntity, this );
 
 		IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
 		if ( pEntity->GetMoveType() == MOVETYPE_VPHYSICS && pPhys )
@@ -1556,18 +1663,16 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	if ( pEntity->VPhysicsGetObjectList( pList, ARRAYSIZE( pList ) ) != 1 || !pList[0]->IsMoveable() )
 		return false;
 
-	// Held objects go where the hold point goes and pop through when it does
-	// (the grab controller's portal stack expects that).
-	if ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD )
-		return false;
-
 	// Heading in (or lying on a floor portal, which gravity pulls it into).
 	// Something just resting against a wall portal pops through as before.
+	// Held objects go where the hold puts them: in, or resting at the plane.
+	// The handover (TeleportEntity) keeps the grab controller's portal stack.
 	Vector vForward = GetSurfaceNormal();
 	Vector vVelocity;
 	AngularImpulse angVelocity;
 	pList[0]->GetVelocity( &vVelocity, &angVelocity );
-	if ( DotProduct( vVelocity, vForward ) > -1.0f && vForward.z < 0.7f )
+	bool bHeld = ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) != 0;
+	if ( !bHeld && DotProduct( vVelocity, vForward ) > -1.0f && vForward.z < 0.7f )
 		return false;
 
 	// Its cross-section fits the hole, there's room for it out of the other
@@ -1673,7 +1778,7 @@ void CHL2MPPortal::UpdateCrossings()
 
 		// Center through: carry it to the other side, still straddling, into
 		// that portal's local world.
-		if ( flCenterDist < 0.0f && !bHeldBack )
+		if ( flCenterDist < -PORTAL_CROSS_HYSTERESIS && !bHeldBack )
 		{
 			CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
 			if ( HL2MPPortalWorld_SyncCollider( pLinked ) > 0 && pPortal->TeleportEntity( pEntity, true ) )
@@ -2130,6 +2235,12 @@ static void DrawPortalRim( const Vector &vCenter, const Vector &vRight, const Ve
 }
 
 #define PORTAL_TUNNEL_DEPTH			24.0f
+// At least this deep even in a thin wall: the near plane (7 units) must not
+// reach past the end of it in the last frames before the camera goes through,
+// or the room behind the wall flickers into view. Past the back of the wall
+// it's still only drawn for a camera right in front of the portal, where it
+// stands in for the far side.
+#define PORTAL_TUNNEL_MIN_DEPTH		16.0f
 // The tunnel is only needed when the camera is close enough to the plane for
 // the near plane to clip the wall and the surface.
 #define PORTAL_TUNNEL_DRAW_DIST		32.0f
@@ -2150,7 +2261,7 @@ float C_HL2MPPortal::GetTunnelDepth()
 	{
 		flThickness = tr.fractionleftsolid * PORTAL_TUNNEL_DEPTH * 2.0f;
 	}
-	m_flTunnelDepth = clamp( flThickness - 1.0f, 0.0f, PORTAL_TUNNEL_DEPTH );
+	m_flTunnelDepth = clamp( flThickness - 1.0f, PORTAL_TUNNEL_MIN_DEPTH, PORTAL_TUNNEL_DEPTH );
 	m_nTunnelVersion = m_nFrameVersion;
 	return m_flTunnelDepth;
 }
@@ -2167,9 +2278,17 @@ int C_HL2MPPortal::DrawModel( int flags )
 	bool bBlue = ( m_iPortalType == HL2MP_PORTAL_BLUE );
 	color32 rimColor = bBlue ? color32{ 64, 160, 255, 255 } : color32{ 255, 140, 20, 255 };
 
-	// Only draw from the front.
-	if ( DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward ) < 0.0f )
-		return 0;
+	// Only draw from the front. A camera a little behind the plane, in the
+	// hole (a frame of smoothing as you walk through), is in the tunnel: draw
+	// just that, or the inside of the wall flickers into view.
+	float flViewDist = DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward );
+	bool bInTunnel = false;
+	if ( flViewDist < 0.0f )
+	{
+		if ( flViewDist < -GetTunnelDepth() || !IsPointInEllipse( CurrentViewOrigin() - vForward * flViewDist ) )
+			return 0;
+		bInTunnel = true;
+	}
 
 	// A live view exists for this portal at this depth if one was rendered
 	// for the view being drawn (main view, or the portal view it's inside).
@@ -2184,10 +2303,12 @@ int C_HL2MPPortal::DrawModel( int flags )
 	{
 		color32 white = { 255, 255, 255, 255 };
 		float flTunnelDepth = GetTunnelDepth();
-		if ( flTunnelDepth > 1.0f && DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward ) < PORTAL_TUNNEL_DRAW_DIST )
+		if ( flTunnelDepth > 1.0f && flViewDist < PORTAL_TUNNEL_DRAW_DIST )
 		{
 			DrawPortalTunnel( GetPortalViewMaterial( iSlot ), GetAbsOrigin(), vForward, vRight, vUp, flTunnelDepth );
 		}
+		if ( bInTunnel )
+			return 1;
 		// Close up the screen-space mapping needs fine tessellation; far away it's nearly affine.
 		float flDist = ( CurrentViewOrigin() - GetAbsOrigin() ).Length();
 		int nRings = ( flDist < 256.0f ) ? PORTAL_MESH_RINGS : ( flDist < 1024.0f ) ? 6 : 3;
@@ -2195,6 +2316,8 @@ int C_HL2MPPortal::DrawModel( int flags )
 	}
 	else
 	{
+		if ( bInTunnel )
+			return 0;
 		// Closed portals are dark; open portals we can't render through are brighter.
 		color32 fill;
 		if ( IsOpen() )

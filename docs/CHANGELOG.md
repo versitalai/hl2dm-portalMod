@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.2 — 2026-10-27
+
+### Fixed
+- **Stuck in a portal whose exit is blocked by a prop.** Loose physics props at the exit no longer block players: they
+  get pushed out of the way along the exit's normal. Frozen props still block (they can't move).
+- **Props snapping back and forth across a portal.** The smooth-crossing handover now needs the prop's center 1 unit
+  past the plane (hysteresis) before swapping sides, so a prop resting on the plane no longer flips every tick.
+- **Held box twitching at a portal.** A box held right at a portal's plane (not yet through) was pushed against the
+  real wall around the hole by the hold, and shook. It now slides into the hole like a loose prop (smooth crossing)
+  and only goes across once the hold point does. Self-test: `gravgun_hold_through_portal_steady`.
+- **Gravity gun: held objects shook (everywhere).** Your game simulated the held object too and fought the server's
+  position as it arrived. It now shows the server's (steady) position, smoothed; `cl_physcannon_predict_held 1` brings
+  back the stock behavior.
+- **Portal Settings window rebuilt.** Plain names (Automatic / Best / Balanced / Fast / Off, sharpness, FPS to keep),
+  changes apply immediately with a status line showing what's drawn and your FPS, Cancel restores. Console-only
+  overrides (`cl_portal_render_views`, `cl_portal_max_views`, `cl_portal_recursion`) that could silently undo the
+  menu are reset by it. The layout is measured from the font in use, so it fits at any resolution and UI scale.
+  The potato preset runs, reopens the window and saves in one go.
+- **Portal views froze.** When a portal's live view stopped being drawn (Automatic dropping to Off when the FPS dipped,
+  portal-in-portal views turning off, too many portals on screen) it kept showing its last image instead of turning
+  solid. Each frame now invalidates last frame's views first.
+- **Flicker walking through a portal in a thin wall.** The tunnel drawn behind the portal surface (it covers the gap
+  when the camera's near plane cuts into the wall) was only as deep as the wall, so in a thin wall the near plane
+  reached past it and the room behind flashed for a frame. It's now at least 16 units deep, and a camera a little
+  behind the plane (inside the hole) keeps the live view and the tunnel instead of losing both.
+- A player standing near a portal no longer shoves props flying past the exit (the blocked-exit push only applies
+  while moving in).
+
+### Added
+- **Interact through portals.** `+use` (buttons, chargers, picking things up), gravity gun pickup, pull and punt,
+  SLAM placement, the RPG laser dot (rockets follow it through the portals) and player names now work on things seen
+  through a portal. Self-tests: `gravgun_pickup_through_portal`, `gravgun_punt_through_portal`,
+  `use_pickup_through_portal`.
+- Self-tests `gravgun_hold_steady` and `gravgun_hold_through_portal_steady`: hold a box with the gravity gun, away from
+  and through a portal, and measure how much it shakes.
+
 ## 0.5.1 — 2026-10-27
 
 ### Fixed
