@@ -53,13 +53,23 @@ static const PortalSettingChoice_t s_ResolutionChoices[] =
 	{ "Full (100%)", "1", NULL }, { "High (75%)", "0.75", NULL }, { "Medium (50%)", "0.5", NULL }, { "Low (25%)", "0.25", NULL },
 };
 
+static const PortalSettingChoice_t s_MaxViewsChoices[] =
+{
+	{ "2 (both portals of a pair)", "2", NULL }, { "1 (closest only)", "1", NULL }, { "0 (all solid color)", "0", NULL },
+};
+
+static const PortalSettingChoice_t s_ViewEaseChoices[] =
+{
+	{ "Smooth (0.2 s)", "0.2", NULL }, { "Quick (0.1 s)", "0.1", NULL }, { "Slow (0.4 s)", "0.4", NULL }, { "Instant", "0", NULL },
+};
+
 // Settings the window owns, saved on open so Cancel can put them back.
 static const char *s_pszPortalSettingConVars[] =
 {
 	"cl_portal_quality", "cl_portal_auto_fps", "cl_portal_resolution", "cl_portal_draw_local_player",
 	"cl_physcannon_predict_held", "cl_portal_quality_debug",
-	// Console-only overrides that would quietly undo the choices above.
-	"cl_portal_render_views", "cl_portal_max_views", "cl_portal_recursion",
+	"cl_portal_max_views", "cl_portal_recursion", "cl_portal_prop_clones", "cl_portal_scissor", "cl_portal_view_ease",
+	"cl_portal_render_views",
 };
 
 class CHL2MPPortalSettings : public Frame
@@ -92,8 +102,23 @@ public:
 		m_pResolution = AddCombo( "Portal view sharpness (max)", s_ResolutionChoices, ARRAYSIZE( s_ResolutionChoices ) );
 		AddHelp( "Live views are drawn smaller than your screen and stretched to fit. Lower is blurrier and faster on a weak graphics card." );
 
+		m_pMaxViews = AddCombo( "Live portals at once (max)", s_MaxViewsChoices, ARRAYSIZE( s_MaxViewsChoices ) );
+		AddHelp( "A limit on top of the look above: each live portal redraws the scene. Others are solid color." );
+
+		m_pRecursion = AddCheck( "Portals seen inside a portal are live" );
+		AddHelp( "Only with \"Best\" (or Automatic at its top step). Costs extra views." );
+
 		m_pDrawSelf = AddCheck( "Show my own body in portals" );
 		AddHelp( "Small cost." );
+
+		m_pPropClones = AddCheck( "Show props coming out of the other portal" );
+		AddHelp( "While a prop slides through, draws the part that's come out the other side." );
+
+		m_pViewEase = AddCombo( "Camera turn after going through", s_ViewEaseChoices, ARRAYSIZE( s_ViewEaseChoices ) );
+		AddHelp( "How fast your view settles when a portal turns it (wall to floor, say)." );
+
+		m_pScissor = AddCheck( "Only draw the part of a view the portal covers" );
+		AddHelp( "Faster. Turn off only if portal views look cut off at their edges." );
 
 		m_pPredictHeld = AddCheck( "Snappier gravity gun hold (can shake)" );
 		AddHelp( "Off: what you hold follows the server's smooth position, a moment behind. On: your PC moves it too (stock Half-Life 2), which can make it shake." );
@@ -125,6 +150,11 @@ public:
 		m_pDrawSelf->SetSelected( ConVarRef( "cl_portal_draw_local_player" ).GetBool() );
 		m_pPredictHeld->SetSelected( ConVarRef( "cl_physcannon_predict_held" ).GetBool() );
 		m_pDebug->SetSelected( ConVarRef( "cl_portal_quality_debug" ).GetBool() );
+		SelectValue( m_pMaxViews, s_MaxViewsChoices, ARRAYSIZE( s_MaxViewsChoices ), "cl_portal_max_views" );
+		SelectValue( m_pViewEase, s_ViewEaseChoices, ARRAYSIZE( s_ViewEaseChoices ), "cl_portal_view_ease" );
+		m_pRecursion->SetSelected( ConVarRef( "cl_portal_recursion" ).GetBool() );
+		m_pPropClones->SetSelected( ConVarRef( "cl_portal_prop_clones" ).GetBool() );
+		m_pScissor->SetSelected( ConVarRef( "cl_portal_scissor" ).GetBool() );
 		m_bLoading = false;
 		UpdateQualityHelp();
 		UpdateStatus();
@@ -391,10 +421,13 @@ private:
 		ConVarRef( "cl_portal_draw_local_player" ).SetValue( m_pDrawSelf->IsSelected() ? 1 : 0 );
 		ConVarRef( "cl_physcannon_predict_held" ).SetValue( m_pPredictHeld->IsSelected() ? 1 : 0 );
 		ConVarRef( "cl_portal_quality_debug" ).SetValue( m_pDebug->IsSelected() ? 1 : 0 );
-		// The quality above decides these; console leftovers would override it.
+		ApplySetting( m_pMaxViews, "cl_portal_max_views" );
+		ApplySetting( m_pViewEase, "cl_portal_view_ease" );
+		ConVarRef( "cl_portal_recursion" ).SetValue( m_pRecursion->IsSelected() ? 1 : 0 );
+		ConVarRef( "cl_portal_prop_clones" ).SetValue( m_pPropClones->IsSelected() ? 1 : 0 );
+		ConVarRef( "cl_portal_scissor" ).SetValue( m_pScissor->IsSelected() ? 1 : 0 );
+		// "Off" in the menu is cl_portal_quality 0; the old master switch stays on.
 		ConVarRef( "cl_portal_render_views" ).SetValue( 1 );
-		ConVarRef( "cl_portal_max_views" ).SetValue( 2 );
-		ConVarRef( "cl_portal_recursion" ).SetValue( 1 );
 		UpdateStatus();
 	}
 
@@ -444,6 +477,11 @@ private:
 	CheckButton	*m_pDrawSelf;
 	CheckButton	*m_pPredictHeld;
 	CheckButton	*m_pDebug;
+	ComboBox	*m_pMaxViews;
+	ComboBox	*m_pViewEase;
+	CheckButton	*m_pRecursion;
+	CheckButton	*m_pPropClones;
+	CheckButton	*m_pScissor;
 	Label		*m_pStatus;
 	Button		*m_pOK;
 	Button		*m_pCancel;

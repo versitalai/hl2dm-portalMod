@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.5 — 2026-10-27
+
+### Fixed
+- **Gravity gun: held object swinging near/far while turning.** The server aimed the hold with only the first of the
+  2-4 commands a client sends per tick (any frame rate above the tick rate), so while turning it lagged and jumped
+  by a different amount each tick. It now updates on every command. The switch to holding close when a wall is about
+  half the reach away is now a quick blend instead of a 24+ unit jump. The client no longer "drops" every frame when
+  it isn't predicting the hold.
+- **Pushed out of a portal when moving the other one.** Re-placing a portal only frees players in its own hole (the
+  other stays open), and standing on the floor right next to a floor portal no longer counts as being in it.
+- **Portal Settings:** every portal option is in the window now (live portals at once, portal-in-portal views,
+  prop copies, camera turn speed, partial drawing). It no longer resets `cl_portal_max_views`/`cl_portal_recursion`.
+- **Slanted surfaces:** things going through a portal with a slanted exit were refused (and stuck at the entrance)
+  when no world-vertical spot fit; spots along the exit's own direction are tried too. Ramp portals line up downhill
+  instead of by where you aimed. (Slanted portals still teleport rather than slide through: the local collision
+  world is axis-aligned only. See ROADMAP.)
+
 ## 0.5.4 — 2026-10-27
 
 ### Fixed
