@@ -1138,7 +1138,9 @@ bool CHL2MPPortal::PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal,
 {
 	// Walls: portal up is world up. Floors/ceilings: portal up points along the shooter's view.
 	Vector vUp;
-	if ( fabs( vNormal.z ) < 0.7f )
+	// (Ramps too, up to near flat: their hole is lined up downhill, not by
+	// where the shooter happened to look.)
+	if ( fabs( vNormal.z ) < 0.95f )
 	{
 		vUp = Vector( 0, 0, 1 ) - vNormal * vNormal.z;
 	}
@@ -1266,7 +1268,9 @@ bool CHL2MPPortal::PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal,
 	{
 		vCenter[i] = floor( vCenter[i] * 32.0f + 0.5f ) / 32.0f;
 	}
-	FreePlayersInHoles();	// moving away from where they're standing in it
+	// Moving away from where they're standing in it. Someone in the other
+	// portal stays: its hole stays open, it just leads somewhere new.
+	FreePlayersInHoles( false );
 	m_angPortal = angPortal;
 	Teleport( &vCenter, &angPortal, NULL );
 	m_bActivated = true;
@@ -1275,16 +1279,16 @@ bool CHL2MPPortal::PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal,
 
 void CHL2MPPortal::Fizzle( void )
 {
-	FreePlayersInHoles();
+	FreePlayersInHoles( true );
 	m_bActivated = false;
 }
 
-void CHL2MPPortal::FreePlayersInHoles( void )
+void CHL2MPPortal::FreePlayersInHoles( bool bLinked )
 {
 	if ( !IsOpen() )
 		return;
 
-	CHL2MPPortal *pPortals[2] = { this, GetLinkedPortal() };
+	CHL2MPPortal *pPortals[2] = { this, bLinked ? GetLinkedPortal() : NULL };
 	for ( int iPortal = 0; iPortal < 2; iPortal++ )
 	{
 		CHL2MPPortal *pPortal = pPortals[iPortal];
@@ -1304,11 +1308,13 @@ void CHL2MPPortal::FreePlayersInHoles( void )
 			Vector vHalf = ( vMaxs - vMins ) * 0.5f;
 			float flCenterDist = DotProduct( vForward, vCenter - pPortal->GetAbsOrigin() );
 			float flGap = flCenterDist - BoxSupport( vHalf, vForward );
-			// Not into the plane, or nowhere near the hole (behind the wall in another room).
-			if ( flGap >= 0.0f || flCenterDist < -BoxSupport( vHalf, vForward ) - 1.0f )
+			// Not into the plane (standing on the floor beside a floor portal is
+			// right at it), or nowhere near the hole (behind the wall in another room).
+			if ( flGap > -1.0f || flCenterDist < -BoxSupport( vHalf, vForward ) - 1.0f )
 				continue;
+			// Its center in line with the hole: in it, not against the wall beside it.
 			Vector vOnPlane = vCenter - vForward * flCenterDist;
-			if ( !pPortal->IsPointInEllipse( vOnPlane, 1.5f ) )
+			if ( !pPortal->IsPointInEllipse( vOnPlane ) )
 				continue;
 
 			Vector vOrigin = pPlayer->GetAbsOrigin() + vForward * ( 1.0f - flGap );
@@ -1512,6 +1518,13 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity, bool bExact )
 			vCentered + Vector( 0, 0, 16 ),
 			vCentered + Vector( 0, 0, 32 ),
 			vCentered - Vector( 0, 0, 16 ),
+			// Slanted exits: out along the exit's own normal and up.
+			vNewCenter + vExitForward * 8.0f,
+			vCentered + vExitForward * 8.0f,
+			vCentered + vExitForward * 16.0f,
+			vCentered + vExitForward * 8.0f + vExitUp * 16.0f,
+			vCentered + vExitForward * 8.0f - vExitUp * 16.0f,
+			vCentered + vExitForward * 24.0f,
 		};
 
 		unsigned int mask = pEntity->PhysicsSolidMaskForEntity();
@@ -1695,7 +1708,7 @@ int CHL2MPPortal::GetCrossingCount()
 
 void CHL2MPPortal::UpdateOnRemove( void )
 {
-	FreePlayersInHoles();
+	FreePlayersInHoles( true );
 	HL2MPPortalWorld_RemoveCollider( this );
 	BaseClass::UpdateOnRemove();
 }

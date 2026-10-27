@@ -117,10 +117,10 @@ public:
 	bool			PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal, const Vector &vViewForward );
 	void			Fizzle( void );
 #ifdef GAME_DLL
-	// This portal (and so its partner's hole) is about to close or move:
-	// players part way into either hole are moved out in front of it, or
-	// they'd be left inside the wall.
-	void			FreePlayersInHoles( void );
+	// This portal is about to close or move: players part way into its hole
+	// (and its partner's too, if bLinked: closing shuts both) are moved out
+	// in front of it, or they'd be left inside the wall.
+	void			FreePlayersInHoles( bool bLinked );
 #endif
 	void			SetLinkedPortal( CHL2MPPortal *pLinked ) { m_hLinkedPortal = pLinked; }
 	void			SetPortalType( int iType ) { m_iPortalType = iType; }
