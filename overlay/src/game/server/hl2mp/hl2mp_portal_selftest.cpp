@@ -355,7 +355,11 @@ private:
 		// The same worlds as static physics objects, for props crossing through.
 		int nWallObjects = HL2MPPortalWorld_SyncCollider( m_hWall );
 		int nFloorObjects = HL2MPPortalWorld_SyncCollider( m_hFloor );
-		Result( "prop_collider_built", nWallObjects > 0 && nFloorObjects > 0, "wall_objects=%d floor_objects=%d", nWallObjects, nFloorObjects );
+		int nWallUnsafe = 0, nFloorUnsafe = 0;
+		bool bWallProps = HL2MPPortalWorld_PropsCanCross( m_hWall, &nWallUnsafe );
+		bool bFloorProps = HL2MPPortalWorld_PropsCanCross( m_hFloor, &nFloorUnsafe );
+		Result( "prop_collider_built", nWallObjects > 0 && nFloorObjects > 0 && bWallProps && bFloorProps,
+			"wall_objects=%d floor_objects=%d props_slide=%d/%d uncut_in_the_way=%d/%d", nWallObjects, nFloorObjects, bWallProps, bFloorProps, nWallUnsafe, nFloorUnsafe );
 	}
 
 	// What a physics object is touching (entity class, contact point), and

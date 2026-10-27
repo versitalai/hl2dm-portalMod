@@ -249,7 +249,7 @@ bool HL2MPPortalWorld_Contains( const CHL2MPPortal *pPortal, const Vector &vecCe
 bool HL2MPPortalWorld_Trace( const CHL2MPPortal *pPortal, const Ray_t &ray, unsigned int mask, trace_t *pTrace );
 // Can props slide through (every uncut static prop / displacement in it is
 // usable by physics whole)? Otherwise they pop through.
-bool HL2MPPortalWorld_PropsCanCross( const CHL2MPPortal *pPortal );
+bool HL2MPPortalWorld_PropsCanCross( const CHL2MPPortal *pPortal, int *pUnsafe = NULL );
 bool HL2MPPortalWorld_GetInfo( const CHL2MPPortal *pPortal, int *pLocalPieces, int *pRemotePieces, int *pStaticProps, int *pDisplacements, unsigned int *pChecksum );
 void HL2MPPortalWorld_Destroy( CHL2MPPortalWorld *pWorld );
 #ifdef GAME_DLL

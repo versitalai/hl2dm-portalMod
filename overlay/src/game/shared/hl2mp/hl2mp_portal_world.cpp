@@ -84,7 +84,7 @@ static void DestroyColliderObjects( CHL2MPPortalWorld *pWorld );
 class CHL2MPPortalWorld
 {
 public:
-	CHL2MPPortalWorld() : m_nVersion( 0 ), m_nLinkedVersion( 0 ), m_nLocalPieces( 0 ), m_nRemotePieces( 0 ), m_nStaticProps( 0 ), m_nDisplacements( 0 ), m_nChecksum( 0 ), m_bPropsCanCross( true ) {}
+	CHL2MPPortalWorld() : m_nVersion( 0 ), m_nLinkedVersion( 0 ), m_nLocalPieces( 0 ), m_nRemotePieces( 0 ), m_nStaticProps( 0 ), m_nDisplacements( 0 ), m_nChecksum( 0 ), m_bPropsCanCross( true ), m_nPropUnsafe( 0 ) {}
 	~CHL2MPPortalWorld() { Clear(); }
 
 	void Clear()
@@ -105,6 +105,7 @@ public:
 		m_nLocalPieces = m_nRemotePieces = m_nStaticProps = m_nDisplacements = 0;
 		m_nChecksum = 0;
 		m_bPropsCanCross = true;
+		m_nPropUnsafe = 0;
 	}
 
 	int		m_nVersion, m_nLinkedVersion;	// frame versions it was built for
@@ -116,6 +117,7 @@ public:
 	// Every uncut collide is prop-safe: the prop collider has the whole world,
 	// so props can slide through (otherwise they pop through as before).
 	bool	m_bPropsCanCross;
+	int		m_nPropUnsafe;		// how many uncut collides stop that
 #ifdef GAME_DLL
 	CHandle<CHL2MPPortalCollider> m_hCollider;
 #endif
@@ -294,22 +296,47 @@ static void AddUncutCollide( CHL2MPPortalWorld *pWorld, PortalWorldCollide_t &co
 {
 	PortalWorldBox_t box;
 	physcollision->CollideGetAABB( &box.vecMins, &box.vecMaxs, collide.pCollide, collide.vecOrigin, collide.angAngles );
+
+	// Where it mustn't be, as a box in the portal's frame (axis-aligned, so a
+	// world box): this side's, the hole behind the plane; the other side's,
+	// anywhere in front of the plane (a couple of units of slack: terrain
+	// meeting the other portal's floor). Its actual shape is tested, not its
+	// bounds: a displacement set's bounds cover the whole region.
 	float flLo[3], flHi[3];
-	GetFrameExtents( pWorld, box.vecMins, box.vecMaxs, flLo, flHi );
 	if ( collide.iSide == PORTAL_WORLD_SIDE_BACK )
 	{
-		collide.bPropSafe = flHi[0] <= 0.5f;
+		flLo[0] = 2.0f;
+		flHi[0] = PORTAL_WORLD_DEPTH;
+		flHi[1] = HL2MP_PORTAL_HALF_WIDTH + PORTAL_WORLD_MARGIN;
+		flHi[2] = HL2MP_PORTAL_HALF_HEIGHT + PORTAL_WORLD_MARGIN;
 	}
 	else
 	{
-		bool bInHole = flLo[0] < PORTAL_WORLD_HOLE_FRONT &&
-			flLo[1] < HL2MP_PORTAL_HALF_WIDTH + PORTAL_WORLD_HOLE_SLACK && flHi[1] > -( HL2MP_PORTAL_HALF_WIDTH + PORTAL_WORLD_HOLE_SLACK ) &&
-			flLo[2] < HL2MP_PORTAL_HALF_HEIGHT + PORTAL_WORLD_HOLE_SLACK && flHi[2] > -( HL2MP_PORTAL_HALF_HEIGHT + PORTAL_WORLD_HOLE_SLACK );
-		collide.bPropSafe = !bInHole;
+		flLo[0] = -PORTAL_WORLD_DEPTH;
+		flHi[0] = PORTAL_WORLD_HOLE_FRONT - 2.0f;
+		flHi[1] = HL2MP_PORTAL_HALF_WIDTH + PORTAL_WORLD_HOLE_SLACK;
+		flHi[2] = HL2MP_PORTAL_HALF_HEIGHT + PORTAL_WORLD_HOLE_SLACK;
 	}
+	flLo[1] = -flHi[1];
+	flLo[2] = -flHi[2];
+	const Vector vAxes[3] = { pWorld->m_vecForward, pWorld->m_vecRight, pWorld->m_vecUp };
+	Vector vCenter = pWorld->m_vecOrigin;
+	Vector vHalf( 0, 0, 0 );
+	for ( int i = 0; i < 3; i++ )
+	{
+		vCenter += vAxes[i] * ( ( flLo[i] + flHi[i] ) * 0.5f );
+		Vector vAxisHalf = vAxes[i] * ( ( flHi[i] - flLo[i] ) * 0.5f );
+		vHalf += Vector( fabs( vAxisHalf.x ), fabs( vAxisHalf.y ), fabs( vAxisHalf.z ) );
+	}
+	Ray_t ray;
+	ray.Init( vCenter, vCenter, -vHalf, vHalf );
+	trace_t tr;
+	physcollision->TraceBox( ray, collide.pCollide, collide.vecOrigin, collide.angAngles, &tr );
+	collide.bPropSafe = !tr.startsolid;
 	if ( !collide.bPropSafe )
 	{
 		pWorld->m_bPropsCanCross = false;
+		pWorld->m_nPropUnsafe++;
 	}
 	pWorld->m_Collides.AddToTail( collide );
 
@@ -597,9 +624,13 @@ bool HL2MPPortalWorld_Trace( const CHL2MPPortal *pPortal, const Ray_t &ray, unsi
 	return true;
 }
 
-bool HL2MPPortalWorld_PropsCanCross( const CHL2MPPortal *pPortal )
+bool HL2MPPortalWorld_PropsCanCross( const CHL2MPPortal *pPortal, int *pUnsafe )
 {
 	CHL2MPPortalWorld *pWorld = GetPortalWorld( pPortal );
+	if ( pUnsafe )
+	{
+		*pUnsafe = pWorld ? pWorld->m_nPropUnsafe : 0;
+	}
 	return pWorld && pWorld->m_bPropsCanCross;
 }
 
@@ -630,8 +661,10 @@ static void PrintPortalWorlds( const CCommand &args )
 			Msg( "portal %d (%s): no local world\n", pPortal->entindex(), pPortal->GetPortalType() == HL2MP_PORTAL_BLUE ? "blue" : "orange" );
 			continue;
 		}
-		Msg( "portal %d (%s): %d pieces here, %d from the other side, %d static props, %d displacement sets, checksum %08x\n",
-			pPortal->entindex(), pPortal->GetPortalType() == HL2MP_PORTAL_BLUE ? "blue" : "orange", nLocal, nRemote, nProps, nDisp, nChecksum );
+		CHL2MPPortalWorld *pWorld = GetPortalWorld( pPortal );
+		Msg( "portal %d (%s): %d pieces here, %d from the other side, %d static props, %d displacement sets, checksum %08x; props %s\n",
+			pPortal->entindex(), pPortal->GetPortalType() == HL2MP_PORTAL_BLUE ? "blue" : "orange", nLocal, nRemote, nProps, nDisp, nChecksum,
+			pWorld->m_bPropsCanCross ? "slide through" : "pop through (uncut props/terrain in the way)" );
 	}
 }
 
