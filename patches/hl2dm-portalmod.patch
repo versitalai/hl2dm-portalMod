@@ -1638,7 +1638,7 @@ index 336cfcb..49d398e 100644
  		float bludgeonHullRadius = 1.732f * BLUDGEON_HULL_DIM;  // hull is +/- 16, so use cuberoot of 2 to determine how big the hull is from center to the corner point
  
 diff --git a/src/game/shared/hl2mp/weapon_physcannon.cpp b/src/game/shared/hl2mp/weapon_physcannon.cpp
-index 26fdfef..0103033 100644
+index 26fdfef..b6ac022 100644
 --- a/src/game/shared/hl2mp/weapon_physcannon.cpp
 +++ b/src/game/shared/hl2mp/weapon_physcannon.cpp
 @@ -71,6 +71,12 @@ extern ConVar hl2_walkspeed;
@@ -1950,7 +1950,20 @@ index 26fdfef..0103033 100644
  	VectorNormalize( pullDir );
  	pullDir *= physcannon_pullforce.GetFloat();
  	
-@@ -1901,9 +2076,18 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+@@ -1887,7 +2062,11 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+ 	AngleVectors( playerAngles, &forward, &right, &up );
+ 
+ 	// Now clamp a sphere of object radius at end to the player's bbox
+-	Vector radial = physcollision->CollideGetExtent( pPhys->GetCollide(), vec3_origin, pEntity->GetAbsAngles(), -forward );
++	// Portal mod: measured at the angles it's being turned to, not the ones it
++	// has now. Those lag while the holder turns, so its depth along the aim
++	// (corner-on vs face-on) kept changing and the hold point slid in and out.
++	QAngle angTarget = TransformAnglesFromPlayerSpace( m_attachedAnglesPlayerSpace, pPlayer );
++	Vector radial = physcollision->CollideGetExtent( pPhys->GetCollide(), vec3_origin, angTarget, -forward );
+ 	Vector player2d = pPlayer->CollisionProp()->OBBMaxs();
+ 	float playerRadius = player2d.Length2D();
+ 	float flDot = DotProduct( forward, radial );
+@@ -1901,9 +2080,18 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
  
  	trace_t	tr;
  	CTraceFilterSkipTwoEntities traceFilter( pPlayer, pEntity, COLLISION_GROUP_NONE );
@@ -1972,7 +1985,7 @@ index 26fdfef..0103033 100644
  
  	if ( tr.fraction < 0.5 )
  	{
-@@ -1977,7 +2161,25 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+@@ -1977,7 +2165,25 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
  	AngleMatrix( angles, attachedToWorld );
  	VectorRotate( m_attachedPositionObjectSpace, attachedToWorld, offset );
  
@@ -1999,7 +2012,7 @@ index 26fdfef..0103033 100644
  
  	return true;
  }
-@@ -1999,6 +2201,8 @@ void CWeaponPhysCannon::UpdateObject( void )
+@@ -1999,6 +2205,8 @@ void CWeaponPhysCannon::UpdateObject( void )
  //-----------------------------------------------------------------------------
  void CWeaponPhysCannon::DetachObject( bool playSound, bool wasLaunched )
  {
@@ -2008,7 +2021,7 @@ index 26fdfef..0103033 100644
  #ifndef CLIENT_DLL
  	// misyl: Disable pred filtering in this server-only section.
  	CDisablePredictionFiltering disablePred;
-@@ -2061,7 +2265,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
+@@ -2061,7 +2269,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
  {
  	CBaseEntity *pAttachedObject = m_hAttachedObject.Get();
  
@@ -2019,7 +2032,7 @@ index 26fdfef..0103033 100644
  	{
  		// NOTE :This must happen after OnPhysGunPickup because that can change the mass
  		if ( pAttachedObject != GetGrabController().GetAttached() )
-@@ -2202,7 +2408,10 @@ void CWeaponPhysCannon::CheckForTarget( void )
+@@ -2202,7 +2412,10 @@ void CWeaponPhysCannon::CheckForTarget( void )
  	VectorMA( startPos, TraceLength(), aimDir, endPos );
  
  	trace_t	tr;
@@ -2031,7 +2044,7 @@ index 26fdfef..0103033 100644
  
  	if ( ( tr.fraction != 1.0f ) && ( tr.m_pEnt != NULL ) )
  	{
-@@ -3342,3 +3551,93 @@ void CallbackPhyscannonImpact( const CEffectData &data )
+@@ -3342,3 +3555,93 @@ void CallbackPhyscannonImpact( const CEffectData &data )
  DECLARE_CLIENT_EFFECT( "PhyscannonImpact", CallbackPhyscannonImpact );
  
  #endif

@@ -102,7 +102,10 @@ ConVar cl_portal_render_views( "cl_portal_render_views", "1", FCVAR_ARCHIVE, "Re
 // An entity this close to the plane and not moving away goes through.
 #define PORTAL_TOUCH_DIST		1.0f
 // How far past the plane a held object's hold point must be before it goes through.
-#define PORTAL_HELD_THROUGH_DIST	2.0f
+// How far past the plane the hold point must be before a held object goes
+// through (each way: it comes back once it's this far back). Wide enough that
+// a hold point wobbling at the plane doesn't flip it back and forth.
+#define PORTAL_HELD_THROUGH_DIST	4.0f
 // How far past the plane a sliding prop's center must be before it's handed
 // to the other portal. It lands this far in front of that one, so going back
 // takes twice this: one at rest on the threshold doesn't flip every tick.
