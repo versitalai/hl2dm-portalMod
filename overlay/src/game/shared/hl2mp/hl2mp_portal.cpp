@@ -136,10 +136,12 @@ BEGIN_NETWORK_TABLE( CHL2MPPortal, DT_HL2MPPortal )
 	RecvPropBool( RECVINFO( m_bActivated ) ),
 	RecvPropInt( RECVINFO( m_iPortalType ) ),
 	RecvPropEHandle( RECVINFO( m_hLinkedPortal ) ),
+	RecvPropQAngles( RECVINFO( m_angPortal ) ),
 #else
 	SendPropBool( SENDINFO( m_bActivated ) ),
 	SendPropInt( SENDINFO( m_iPortalType ), 2, SPROP_UNSIGNED ),
 	SendPropEHandle( SENDINFO( m_hLinkedPortal ) ),
+	SendPropQAngles( SENDINFO( m_angPortal ), -1, SPROP_NOSCALE ),
 #endif
 END_NETWORK_TABLE()
 
@@ -159,6 +161,8 @@ CHL2MPPortal::CHL2MPPortal()
 	m_bRoom = true;
 	m_iCacheAxis = -1;
 	m_flCacheAxisSign = 1.0f;
+	m_pLocalWorld = NULL;
+	m_angPortal.Init();
 #ifdef CLIENT_DLL
 	for ( int i = 0; i < HL2MP_PORTAL_MAX_DEPTH; i++ )
 	{
@@ -174,6 +178,7 @@ CHL2MPPortal::CHL2MPPortal()
 CHL2MPPortal::~CHL2MPPortal()
 {
 	s_HL2MPPortals.FindAndRemove( this );
+	HL2MPPortalWorld_Destroy( m_pLocalWorld );
 }
 
 void CHL2MPPortal::Spawn( void )
@@ -197,8 +202,10 @@ bool CHL2MPPortal::IsOpen() const
 
 void CHL2MPPortal::UpdateFrameCache() const
 {
+	// Origin: placement snaps it to what the network sends exactly. Angles:
+	// the exact copy (the entity's own are quantized on the client).
 	const Vector &vOrigin = GetAbsOrigin();
-	const QAngle &angles = GetAbsAngles();
+	const QAngle &angles = m_angPortal.Get();
 	if ( m_nFrameVersion != 0 && vOrigin == m_vecCacheOrigin && angles == m_angCacheAngles )
 		return;
 
@@ -255,8 +262,8 @@ VMatrix CHL2MPPortal::MatrixThisToLinked() const
 		return m_matCacheToLinked;
 
 	VMatrix matThisToWorld, matWorldToThis, matLinkedToWorld, matRotate;
-	matThisToWorld.SetupMatrixOrgAngles( GetAbsOrigin(), GetAbsAngles() );
-	matLinkedToWorld.SetupMatrixOrgAngles( pLinked->GetAbsOrigin(), pLinked->GetAbsAngles() );
+	matThisToWorld.SetupMatrixOrgAngles( m_vecCacheOrigin, m_angCacheAngles );
+	matLinkedToWorld.SetupMatrixOrgAngles( pLinked->m_vecCacheOrigin, pLinked->m_angCacheAngles );
 	MatrixInverseTR( matThisToWorld, matWorldToThis );
 
 	// Half turn around local up: in through the front, out through the front.
@@ -527,6 +534,113 @@ Vector UTIL_HL2MPPortal_PlayerFunnelMove( const Vector &vecOrigin, const Vector 
 
 #define PORTAL_CARVE_EPSILON	0.1f
 
+// Entities only: the world near a portal comes from its local world.
+class CPortalEntityTraceFilter : public CTraceFilterSimple
+{
+public:
+	CPortalEntityTraceFilter( const IHandleEntity *pIgnore, int collisionGroup ) : CTraceFilterSimple( pIgnore, collisionGroup ) {}
+	virtual TraceType_t GetTraceType() const { return TRACE_ENTITIES_ONLY; }
+};
+
+// The part of a hull sweep in front of the plane (back clipped at the plane
+// for the deepest point of the sweep) and the part through it (front clipped
+// for the shallowest point). Either can be empty (mins >= maxs on the axis).
+static void SplitHullAtPlane( const Vector &vecStart, const Vector &vecEnd, const Vector &vecMins, const Vector &vecMaxs, int k, float flSign, float flDist,
+	Vector *pFrontMins, Vector *pFrontMaxs, Vector *pBackMins, Vector *pBackMaxs )
+{
+	*pFrontMins = *pBackMins = vecMins;
+	*pFrontMaxs = *pBackMaxs = vecMaxs;
+	if ( flSign > 0.0f )
+	{
+		( *pFrontMins )[k] = MAX( vecMins[k], flDist + PORTAL_CARVE_EPSILON - MIN( vecStart[k], vecEnd[k] ) );
+		( *pBackMaxs )[k] = MIN( vecMaxs[k], flDist - PORTAL_CARVE_EPSILON - MAX( vecStart[k], vecEnd[k] ) );
+	}
+	else
+	{
+		( *pFrontMaxs )[k] = MIN( vecMaxs[k], flDist - PORTAL_CARVE_EPSILON - MAX( vecStart[k], vecEnd[k] ) );
+		( *pBackMins )[k] = MAX( vecMins[k], flDist + PORTAL_CARVE_EPSILON - MIN( vecStart[k], vecEnd[k] ) );
+	}
+}
+
+// The back part of a hull, moved through the portal: an axis-aligned box
+// around the rotated one (axis-aligned portals rotate by multiples of 90).
+static void TraceBackPartThroughPortal( CHL2MPPortal *pPortal, const Vector &vecStart, const Vector &vecEnd, const Vector &vecBackMins, const Vector &vecBackMaxs,
+	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace )
+{
+	VMatrix matToLinked = pPortal->MatrixThisToLinked();
+	Vector vecBackMid = ( vecBackMins + vecBackMaxs ) * 0.5f;
+	Vector vecBackHalf = ( vecBackMaxs - vecBackMins ) * 0.5f;
+	Vector vecRemoteHalf;
+	for ( int i = 0; i < 3; i++ )
+	{
+		vecRemoteHalf[i] = fabs( matToLinked.m[i][0] ) * vecBackHalf.x + fabs( matToLinked.m[i][1] ) * vecBackHalf.y + fabs( matToLinked.m[i][2] ) * vecBackHalf.z;
+	}
+
+	Ray_t ray;
+	ray.Init( matToLinked.VMul4x3( vecStart + vecBackMid ), matToLinked.VMul4x3( vecEnd + vecBackMid ), -vecRemoteHalf, vecRemoteHalf );
+	enginetrace->TraceRay( ray, mask, pFilter, pTrace );
+	// Normal back into this side's space.
+	pTrace->plane.normal = matToLinked.VMul3x3Transpose( pTrace->plane.normal );
+}
+
+// The whole hull against the portal's local world (the wall with the hole
+// cut out, the other side behind it), and entities on both sides: the part
+// in front of the plane here, the part through it at the other portal.
+// False if the sweep goes outside the region the local world covers.
+static bool TracePlayerHullLocalWorld( CHL2MPPortal *pPortal, const Vector &vecStart, const Vector &vecEnd, const Vector &vecMins, const Vector &vecMaxs,
+	unsigned int mask, IHandleEntity *pIgnore, int collisionGroup, int k, float flSign, float flDist, trace_t &pm )
+{
+	Vector vecMid = ( vecMins + vecMaxs ) * 0.5f;
+	Vector vecHalf = ( vecMaxs - vecMins ) * 0.5f;
+	if ( !HL2MPPortalWorld_Contains( pPortal, vecStart + vecMid, vecEnd + vecMid, vecHalf ) )
+		return false;
+
+	Ray_t ray;
+	ray.Init( vecStart, vecEnd, vecMins, vecMaxs );
+	trace_t trWorld;
+	if ( !HL2MPPortalWorld_Trace( pPortal, ray, mask, &trWorld ) )
+		return false;
+
+	Vector vecFrontMins, vecFrontMaxs, vecBackMins, vecBackMaxs;
+	SplitHullAtPlane( vecStart, vecEnd, vecMins, vecMaxs, k, flSign, flDist, &vecFrontMins, &vecFrontMaxs, &vecBackMins, &vecBackMaxs );
+	CPortalEntityTraceFilter filter( pIgnore, collisionGroup );
+
+	trace_t trFront;
+	memset( &trFront, 0, sizeof( trFront ) );
+	trFront.fraction = 1.0f;
+	if ( vecFrontMins[k] < vecFrontMaxs[k] )
+	{
+		Ray_t rayFront;
+		rayFront.Init( vecStart, vecEnd, vecFrontMins, vecFrontMaxs );
+		enginetrace->TraceRay( rayFront, mask, &filter, &trFront );
+	}
+
+	trace_t trBack;
+	memset( &trBack, 0, sizeof( trBack ) );
+	trBack.fraction = 1.0f;
+	if ( vecBackMins[k] < vecBackMaxs[k] )
+	{
+		TraceBackPartThroughPortal( pPortal, vecStart, vecEnd, vecBackMins, vecBackMaxs, mask, &filter, &trBack );
+	}
+
+	// First hit wins; starting stuck in anything wins outright.
+	trace_t *pBest = &trWorld;
+	trace_t *pCandidates[2] = { &trFront, &trBack };
+	for ( int i = 0; i < 2; i++ )
+	{
+		trace_t *pTr = pCandidates[i];
+		if ( pBest->startsolid )
+			break;
+		if ( pTr->startsolid || pTr->fraction < pBest->fraction )
+			pBest = pTr;
+	}
+
+	pm = *pBest;
+	pm.startpos = vecStart;
+	pm.endpos = vecStart + ( vecEnd - vecStart ) * pBest->fraction;
+	return true;
+}
+
 bool UTIL_HL2MPPortal_TracePlayerHull( const Vector &vecStart, const Vector &vecEnd, const Vector &vecMins, const Vector &vecMaxs,
 	unsigned int mask, IHandleEntity *pIgnore, int collisionGroup, trace_t &pm )
 {
@@ -568,6 +682,10 @@ bool UTIL_HL2MPPortal_TracePlayerHull( const Vector &vecStart, const Vector &vec
 		// pushes the hull clear.
 		if ( flGapStart >= -PORTAL_CARVE_EPSILON && !pPortal->GetLinkedPortal()->HasRoomForHull( vecMins, vecMaxs, pIgnore ) )
 			continue;
+
+		if ( sv_portal_local_world.GetBool() &&
+			TracePlayerHullLocalWorld( pPortal, vecStart, vecEnd, vecMins, vecMaxs, mask, pIgnore, collisionGroup, k, flSign, flDist, pm ) )
+			return true;
 
 		// A position sticking through the plane outside the hole is inside the
 		// rim of the wall around it.
@@ -1036,6 +1154,13 @@ bool CHL2MPPortal::PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal,
 		}
 	}
 
+	// To 1/32 unit, which the network sends exactly: the client must see the
+	// same frame to build the same local collision world.
+	for ( int i = 0; i < 3; i++ )
+	{
+		vCenter[i] = floor( vCenter[i] * 32.0f + 0.5f ) / 32.0f;
+	}
+	m_angPortal = angPortal;
 	Teleport( &vCenter, &angPortal, NULL );
 	m_bActivated = true;
 	return true;
@@ -1371,9 +1496,7 @@ struct PortalCrossing_t
 {
 	EHANDLE					hEntity;
 	CHandle<CHL2MPPortal>	hPortal;	// the portal whose plane it straddles
-	float					flStart;
 	bool					bThrough;	// moved through already: leaving through hPortal
-	bool					bGravityOff;	// gravity turned off for it (restored at the end)
 };
 static CUtlVector<PortalCrossing_t> s_Crossings;
 
@@ -1392,14 +1515,38 @@ bool CHL2MPPortal::IsCrossing( CBaseEntity *pEntity )
 	return FindCrossing( pEntity ) >= 0;
 }
 
+bool CHL2MPPortal::IsCrossingThrough( CBaseEntity *pEntity, const CHL2MPPortal *pPortal )
+{
+	int i = FindCrossing( pEntity );
+	return i >= 0 && s_Crossings[i].hPortal.Get() == pPortal;
+}
+
 int CHL2MPPortal::GetCrossingCount()
 {
 	return s_Crossings.Count();
 }
 
+void CHL2MPPortal::UpdateOnRemove( void )
+{
+	HL2MPPortalWorld_RemoveCollider( this );
+	BaseClass::UpdateOnRemove();
+}
+
+// Which world a crossing prop collides with changed: have physics re-ask.
+static void RecheckCollisions( CBaseEntity *pEntity )
+{
+	IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
+	if ( pPhys )
+	{
+		pPhys->RecheckCollisionFilter();
+		pPhys->RecheckContactPoints();
+		pPhys->Wake();
+	}
+}
+
 bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 {
-	if ( !sv_portal_smooth_props.GetBool() || !CanCarve() || IsCrossing( pEntity ) )
+	if ( !sv_portal_smooth_props.GetBool() || !sv_portal_local_world.GetBool() || !CanCarve() || IsCrossing( pEntity ) )
 		return false;
 	if ( pEntity->IsPlayer() || pEntity->GetMoveType() != MOVETYPE_VPHYSICS )
 		return false;
@@ -1409,16 +1556,13 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	if ( pEntity->VPhysicsGetObjectList( pList, ARRAYSIZE( pList ) ) != 1 || !pList[0]->IsMoveable() )
 		return false;
 
-	// Held objects go where the hold point goes (turned to the carry angles,
-	// steered into the hole), not straight through; backing one out of a
-	// crossing jumps it away from the hold point and the grab breaks. They
-	// pop through as before.
+	// Held objects go where the hold point goes and pop through when it does
+	// (the grab controller's portal stack expects that).
 	if ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD )
 		return false;
 
 	// Heading in (or lying on a floor portal, which gravity pulls it into).
-	// Something resting against a wall portal goes through whole: it would
-	// sit half in the wall with nothing moving it.
+	// Something just resting against a wall portal pops through as before.
 	Vector vForward = GetSurfaceNormal();
 	Vector vVelocity;
 	AngularImpulse angVelocity;
@@ -1426,12 +1570,17 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	if ( DotProduct( vVelocity, vForward ) > -1.0f && vForward.z < 0.7f )
 		return false;
 
-	// Its cross-section fits the hole, and there's room for it out of the other portal.
+	// Its cross-section fits the hole, there's room for it out of the other
+	// portal, and it's inside what the local worlds of both portals cover.
 	Vector vMins, vMaxs;
 	pEntity->CollisionProp()->WorldSpaceAABB( &vMins, &vMaxs );
 	Vector vCenter = ( vMins + vMaxs ) * 0.5f;
 	Vector vHalf = ( vMaxs - vMins ) * 0.5f;
-	return HullFitsHole( vCenter, vHalf ) && GetLinkedPortal()->HasRoomForHull( -vHalf, vHalf, pEntity );
+	if ( !HullFitsHole( vCenter, vHalf ) || !GetLinkedPortal()->HasRoomForHull( -vHalf, vHalf, pEntity ) )
+		return false;
+	if ( !HL2MPPortalWorld_Contains( this, vCenter, vCenter, vHalf ) )
+		return false;
+	return HL2MPPortalWorld_SyncCollider( this ) > 0 && HL2MPPortalWorld_SyncCollider( GetLinkedPortal() ) > 0;
 }
 
 void CHL2MPPortal::StartCrossing( CBaseEntity *pEntity )
@@ -1443,18 +1592,16 @@ void CHL2MPPortal::StartCrossing( CBaseEntity *pEntity )
 	PortalCrossing_t crossing;
 	crossing.hEntity = pEntity;
 	crossing.hPortal = this;
-	crossing.flStart = gpGlobals->curtime;
 	crossing.bThrough = false;
-	crossing.bGravityOff = false;
 	s_Crossings.AddToTail( crossing );
 
-	// The wall around and behind the hole stops blocking it.
+	// The real world stops and the local one (with its hole) starts.
 	PhysDisableEntityCollisions( g_PhysWorldObject, pPhys );
-	pPhys->Wake();
+	RecheckCollisions( pEntity );
 }
 
-// Collide with the world again; bPushOut first moves it clear of the portal
-// it's in (giving up on a crossing that went wrong).
+// Back to the real world; bPushOut first moves it clear of the portal it's in
+// (the portal closed with it part way through).
 static void EndCrossing( int iCrossing, bool bPushOut )
 {
 	PortalCrossing_t crossing = s_Crossings[iCrossing];
@@ -1480,11 +1627,7 @@ static void EndCrossing( int iCrossing, bool bPushOut )
 	}
 
 	PhysEnableEntityCollisions( g_PhysWorldObject, pPhys );
-	if ( crossing.bGravityOff )
-	{
-		pPhys->EnableGravity( true );
-	}
-	pPhys->Wake();
+	RecheckCollisions( pEntity );
 }
 
 void CHL2MPPortal::UpdateCrossings()
@@ -1500,8 +1643,9 @@ void CHL2MPPortal::UpdateCrossings()
 			continue;
 		}
 
+		// A portal closed or moved (its local world is gone or rebuilt).
 		CHL2MPPortal *pPortal = crossing.hPortal;
-		if ( !pPortal || !pPortal->IsOpen() )
+		if ( !pPortal || !pPortal->CanCarve() || HL2MPPortalWorld_SyncCollider( pPortal ) <= 0 )
 		{
 			EndCrossing( i, true );
 			continue;
@@ -1521,23 +1665,22 @@ void CHL2MPPortal::UpdateCrossings()
 		float flOutSpeed = DotProduct( vVelocity, vForward );
 
 		// Picked up part way through: it goes across only once the spot it's
-		// held at is past the plane too (as in ShouldTeleport). The hold keeps
-		// it hovering at the plane otherwise, flipping between the portals.
-		bool bHeldBack = false;
+		// held at is past the plane too (as in ShouldTeleport), or it flips
+		// between the portals while the hold keeps it at the plane.
 		Vector vecHeldTarget;
-		if ( ( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) && PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
-			DotProduct( vForward, vecHeldTarget - pPortal->GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST )
-		{
-			bHeldBack = true;
-		}
+		bool bHeldBack = ( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) && PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
+			DotProduct( vForward, vecHeldTarget - pPortal->GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST;
 
-		// Center through: carry it to the other side, still straddling.
+		// Center through: carry it to the other side, still straddling, into
+		// that portal's local world.
 		if ( flCenterDist < 0.0f && !bHeldBack )
 		{
-			if ( pPortal->TeleportEntity( pEntity, true ) )
+			CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
+			if ( HL2MPPortalWorld_SyncCollider( pLinked ) > 0 && pPortal->TeleportEntity( pEntity, true ) )
 			{
-				crossing.hPortal = pPortal->GetLinkedPortal();
+				crossing.hPortal = pLinked;
 				crossing.bThrough = true;
+				RecheckCollisions( pEntity );
 			}
 			else
 			{
@@ -1555,35 +1698,13 @@ void CHL2MPPortal::UpdateCrossings()
 			continue;
 		}
 
-		// Turned or pulled out of line with the hole, or stuck: back out.
-		if ( ( flGap < 0.0f && !pPortal->HullFitsHole( vCenter, vHalf ) ) || gpGlobals->curtime - crossing.flStart > 4.0f )
+		// Wandered out of what the local world covers (bounced off along the
+		// wall): the real world takes over. Only in front of the plane; part
+		// way through it stays (the rim keeps it in the hole).
+		if ( flGap >= 0.0f && !HL2MPPortalWorld_Contains( pPortal, vCenter, vCenter, vHalf ) )
 		{
-			EndCrossing( i, true );
+			EndCrossing( i, false );
 			continue;
-		}
-
-		// Straight through: no drift toward the walls around the hole (they
-		// don't stop it now) and no spin that would swing it into them. Gravity
-		// only acts along a floor or ceiling portal's normal; through a wall
-		// portal it would sink it into the bottom of the hole. A held object
-		// follows its holder instead.
-		if ( !( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
-		{
-			Vector vStraight = vForward * flOutSpeed;
-			AngularImpulse angNone( 0, 0, 0 );
-			pPhys->SetVelocity( &vStraight, &angNone );
-
-			bool bSideways = fabs( vForward.z ) < 0.7f;
-			if ( bSideways && !crossing.bGravityOff && pPhys->IsGravityEnabled() )
-			{
-				pPhys->EnableGravity( false );
-				crossing.bGravityOff = true;
-			}
-			else if ( !bSideways && crossing.bGravityOff )
-			{
-				pPhys->EnableGravity( true );
-				crossing.bGravityOff = false;
-			}
 		}
 	}
 }

@@ -7,6 +7,8 @@ How the portal mod works, file by file. Paths are relative to the SDK tree (`sdk
 | File | Kind | Role |
 |---|---|---|
 | `src/game/shared/hl2mp/hl2mp_portal.h/.cpp` | new | `prop_hl2mp_portal` entity: placement, teleporting, bullet tracing, client drawing |
+| `src/game/shared/hl2mp/hl2mp_portal_world.cpp` | new | Each portal's local collision world (wall with the hole cut out + the other side), traced by player movement |
+| `src/game/shared/hl2mp/hl2mp_portal_carve.h` | new | Convex plane-set geometry: vertices, cutting a prism out of a convex solid (tested by `tests/portal_carve_test.cpp`) |
 | `src/game/shared/hl2mp/weapon_portalgun.cpp` | new | `weapon_portalgun`: fires/places portals, owns one linked pair |
 | `src/game/client/hl2mp/hl2mp_rendertargets.cpp` | new | Exposes `IClientRenderTargets` for HL2MP; allocates `_rt_HL2MPPortal0/1` |
 | `game/mod_hl2mp/scripts/weapon_portalgun.txt` | new | Weapon script (models, sounds, HUD slot) |
@@ -62,22 +64,51 @@ A prop goes through the hole a piece at a time instead of popping out whole (`sv
 `CanCrossSmoothly`: an axis-aligned portal, one moveable physics object (no ragdolls), not held (the grab controller
 turns and steers it, and backing it out of a crossing jumps it away from the hold point: `+use` drops it), its AABB
 footprint fits the hole, room for it out of the other portal, and heading in (or on a floor portal: gravity takes it in; a prop resting
-against a wall portal still pops through, it would sit half in the wall).
-- `StartCrossing` records it and turns off its collisions with the world (`PhysDisableEntityCollisions` with
-  `g_PhysWorldObject`): the wall around and behind the hole stops blocking it. Other props and players still do.
-- `UpdateCrossings` (a game system, every tick after entity think): while it's straddling, velocity is kept along the
-  portal normal and spin is stopped (it can't drift into the walls it no longer hits); through a wall portal gravity is
-  off (it would sink into the bottom of the hole). One picked up part way through follows the grab controller,
-  and goes across only once the hold point is 2 units past the plane (like `ShouldTeleport`; else it flips).
+against a wall portal still pops through), `sv_portal_local_world` on, and inside both portals' local worlds.
+- `StartCrossing` records it and swaps the world it collides with: collisions with the real world off
+  (`PhysDisableEntityCollisions` with `g_PhysWorldObject`), with the portal's local world on. The local world is
+  built as static physics objects by a server-only `hl2mp_portal_collider` entity per portal
+  (`HL2MPPortalWorld_SyncCollider`, solid, window and grate pieces). The collider isn't solid, so nothing else touches
+  it; `ForceVPhysicsCollide` makes only props crossing through its portal collide with it. So a crossing prop hits the
+  rim of the hole, lands on the floor on the other side, tumbles and slides normally. Other props and players still
+  collide as usual (only on their own side). Rebuilding a portal's local world destroys the collider's objects first
+  (they point at its collides).
+- `UpdateCrossings` (a game system, every tick after entity think) only decides when to hand over and when it's done.
+  One picked up part way through goes across only once the hold point is 2 units past the plane (like
+  `ShouldTeleport`; else it flips).
 - When its center crosses the plane, `TeleportEntity( bExact )` maps it exactly (still straddling, now the other
-  portal's plane) and the crossing continues there. It ends, world collisions back on, once it's 2 units clear of the
-  plane (moving away), or with a push-out if it turned out of line with the hole, a portal closed, or 4 s passed.
+  portal's plane) and it collides with that portal's collider instead. It ends, real world back on, once it's 2 units
+  clear of the plane (moving away), or if it wanders in front of the plane out of the region the local world covers.
+  A portal closing or moving with a prop part way through pushes it out in front. A prop that comes to rest part way
+  through stays crossing (it's resting on real geometry now).
 - Client: `C_HL2MPPortalCloneSystem` keeps a client-only copy (`C_HL2MPPortalPropClone`) of each physics prop within
   24 units of an open portal's plane, in line with the hole. Every frame after interpolation (`Simulate`) it's put at
   `M * prop` for whichever portal of the pair the prop is through, and drawn only while the prop is through the plane.
   Each portal's opaque surface hides what's behind its plane (the part gone in, and the part of the copy not out yet),
   and portal views already clip at the exit plane, so no clip planes are needed. The copy swaps sides in the same
   frame the prop does, so the hand-over at the center is invisible. `cl_portal_prop_clones 0` turns copies off.
+
+## Local collision world (shared, `hl2mp_portal_world.cpp`)
+
+The map's collision has no holes: the wall behind a portal is solid. Each carve-able (axis-aligned) portal pair gets a
+local collision world, built on demand on client and server alike and rebuilt when either portal moves (frame versions):
+- **Region:** a box 128 units in front of and behind the plane, 96 beyond the hole on each side.
+- **This side:** world brushes in the region (`enginetrace->GetBrushesInAABB` / `GetBrushInfo`), clipped to it, with
+  the hole cut out (`PortalCarve_Subtract`): the portal's bounding rectangle + 1 unit of slack, from 1 unit in front of
+  the surface back. Players need the rectangle (a 72-tall hull doesn't fit the ellipse of a floor-level wall portal);
+  the cutter takes any convex prism, so an ellipse polygon can be used for props later.
+- **Other side:** brushes in the front half of the linked portal's region, mapped in behind this plane
+  (`linked->MatrixThisToLinked()`).
+- Static props (their vcollides) and displacements of both regions, uncut. The pieces are grouped by brush contents
+  (solid, player clip, grate...) into one `CPhysCollide` each, traced with `physcollision->TraceBox`.
+- **Parity:** the client must build the same geometry. Placement snaps the origin to 1/32 unit (what the network sends
+  exactly), the angles go out unquantized (`m_angPortal`, used for the frame), and client portals don't interpolate.
+  `sv_portal_world_info` / `cl_portal_world_info` print piece counts and a checksum per portal to compare.
+- **Player movement** (`UTIL_HL2MPPortal_TracePlayerHull`): under the same conditions as before (hull touching the
+  plane, footprint in the hole, room at the exit), if the sweep stays inside the region, the whole hull is traced
+  against the local world, and entities with entity-only traces: the part in front of the plane here, the part through
+  it at the other portal. First hit wins. Outside the region, or with `sv_portal_local_world 0`, the split-hull
+  approximation below is used.
 
 ## Walking through (shared, predicted)
 

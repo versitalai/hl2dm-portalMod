@@ -110,6 +110,7 @@ saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
 | `cl_portal_recursion` | 1 | client | Allow live portal-in-portal views (High only) |
 | `cl_portal_draw_local_player` | 1 | client | Draw your own model in portal views |
 | `sv_portal_lookahead` | 3 | server | Ticks of lookahead for fast movers |
+| `sv_portal_local_world` | 1 | server, replicated | Players near a portal collide with its local world (wall with the hole cut out + the other side); 0 = old approximation |
 | `sv_portal_smooth_props` | 1 | server | Physics props that fit the hole slide through (0 = they pop through whole) |
 | `cl_portal_prop_clones` | 1 | client | Draw the part of a sliding prop that's come out of the other portal |
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |

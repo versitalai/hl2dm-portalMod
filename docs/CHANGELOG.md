@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-10-27
+
+### Changed
+- **Players collide with a real hole near portals.** Each portal builds a local collision world: the map around it with
+  the hole cut out of the wall, and the other portal's surroundings behind it. Moving into or through a portal is
+  traced against that instead of the old split-hull approximation, so the rim, the exit floor and walls behave like
+  real geometry. `sv_portal_local_world 0` goes back to the old way. `sv_portal_world_info` / `cl_portal_world_info`
+  print what each portal built. Self-tests: `local_world_built`, `local_world_hole`, `local_world_other_side`.
+- **Props crossing a portal collide with its local world too.** A prop part way through used to ignore the world
+  entirely (pushed straight through, no spin, no gravity through wall portals, backed out after 4 s). Now it hits the
+  rim, lands on the floor on the other side, tumbles and rests part way through like it would in a real hole. The
+  local world is built as static physics objects that only crossing props collide with. Self-test: `prop_collider_built`.
+- CI runs the unit tests (`tests/run_math_test.sh`, new `tests/run_carve_test.sh`).
+
 ## 0.4.4 — 2026-10-26
 
 ### Added

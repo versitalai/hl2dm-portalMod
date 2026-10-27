@@ -7,6 +7,6 @@
 - Packaging: `scripts/package.sh` → `dist/`; installers live in `packaging/` (server kit: `packaging/server/`). CI: `.github/workflows/build.yml`.
 - Build: native ninja + host gcc works (no podman). `vpc` needs `VPC_NINJA_BUILD_MODE` set or it segfaults.
   Full build ~6 min on 4 cores; incremental seconds.
-- No game content on the build box: only compile/link + `tests/run_math_test.sh` can be verified here.
+- No game content on the build box: only compile/link + `tests/run_math_test.sh` / `tests/run_carve_test.sh` can be verified here.
 - Read `docs/ARCHITECTURE.md` first; log changes in `docs/CHANGELOG.md`; limitations/ideas in `docs/ROADMAP.md`.
 - Keep SDK-touching edits behind `#ifdef HL2MP` and match Valve style (tabs, `m_` members, `C_` client aliases).
