@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.4 — 2026-10-27
+
+### Fixed
+- **Prop's copy lagging behind as it slides through a portal.** The copy drawn coming out of the other portal was
+  placed earlier in the frame than the prop's final drawn position; it's now placed right before it's drawn.
+- **Stuck in the wall/floor when a portal you're standing in closes or moves.** Players part way into either hole of
+  the pair are now moved out in front of it first.
+- **Prop flipping between two floor portals without moving.** Popped out of a floor-facing exit, a prop now comes out
+  with the speed of the fall it took going in (at least), so it bounces up instead of resting on the exit and
+  flipping back.
+
 ## 0.5.3 — 2026-10-27
 
 ### Fixed

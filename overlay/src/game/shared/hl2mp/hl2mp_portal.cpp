@@ -6,6 +6,7 @@
 
 #include "cbase.h"
 #include "hl2mp_portal.h"
+#include "movevars_shared.h"
 #include "filesystem.h"
 
 #ifdef CLIENT_DLL
@@ -1265,6 +1266,7 @@ bool CHL2MPPortal::PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal,
 	{
 		vCenter[i] = floor( vCenter[i] * 32.0f + 0.5f ) / 32.0f;
 	}
+	FreePlayersInHoles();	// moving away from where they're standing in it
 	m_angPortal = angPortal;
 	Teleport( &vCenter, &angPortal, NULL );
 	m_bActivated = true;
@@ -1273,7 +1275,47 @@ bool CHL2MPPortal::PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal,
 
 void CHL2MPPortal::Fizzle( void )
 {
+	FreePlayersInHoles();
 	m_bActivated = false;
+}
+
+void CHL2MPPortal::FreePlayersInHoles( void )
+{
+	if ( !IsOpen() )
+		return;
+
+	CHL2MPPortal *pPortals[2] = { this, GetLinkedPortal() };
+	for ( int iPortal = 0; iPortal < 2; iPortal++ )
+	{
+		CHL2MPPortal *pPortal = pPortals[iPortal];
+		if ( !pPortal )
+			continue;
+		Vector vForward = pPortal->GetSurfaceNormal();
+
+		for ( int i = 1; i <= gpGlobals->maxClients; i++ )
+		{
+			CBasePlayer *pPlayer = UTIL_PlayerByIndex( i );
+			if ( !pPlayer || !pPlayer->IsAlive() || pPlayer->GetMoveType() == MOVETYPE_NOCLIP )
+				continue;
+
+			Vector vMins, vMaxs;
+			pPlayer->CollisionProp()->WorldSpaceAABB( &vMins, &vMaxs );
+			Vector vCenter = ( vMins + vMaxs ) * 0.5f;
+			Vector vHalf = ( vMaxs - vMins ) * 0.5f;
+			float flCenterDist = DotProduct( vForward, vCenter - pPortal->GetAbsOrigin() );
+			float flGap = flCenterDist - BoxSupport( vHalf, vForward );
+			// Not into the plane, or nowhere near the hole (behind the wall in another room).
+			if ( flGap >= 0.0f || flCenterDist < -BoxSupport( vHalf, vForward ) - 1.0f )
+				continue;
+			Vector vOnPlane = vCenter - vForward * flCenterDist;
+			if ( !pPortal->IsPointInEllipse( vOnPlane, 1.5f ) )
+				continue;
+
+			Vector vOrigin = pPlayer->GetAbsOrigin() + vForward * ( 1.0f - flGap );
+			pPlayer->SetGroundEntity( NULL );
+			pPlayer->Teleport( &vOrigin, NULL, NULL );
+		}
+	}
 }
 
 bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
@@ -1499,6 +1541,21 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity, bool bExact )
 			return false;
 		}
 
+		// Popped out of a floor-facing exit (resting on a portal, or two floor
+		// portals): it fell in from where it lay, so it comes out with the speed
+		// of that fall and bounces up. Out at rest it touched the exit, popped
+		// back, and flipped between the portals without moving.
+		IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
+		if ( !pEntity->IsPlayer() && pEntity->GetMoveType() == MOVETYPE_VPHYSICS && pPhys && vExitForward.z > 0.7f &&
+			!( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
+		{
+			float flMinOut = sqrtf( 2.0f * GetCurrentGravity() * 2.0f * flExtent );
+			float flOut = DotProduct( vNewVelocity, vExitForward );
+			if ( flOut < flMinOut )
+			{
+				vNewVelocity += vExitForward * ( flMinOut - flOut );
+			}
+		}
 	}
 
 	Vector vNewOrigin = vNewCenter - vOffset;
@@ -1638,6 +1695,7 @@ int CHL2MPPortal::GetCrossingCount()
 
 void CHL2MPPortal::UpdateOnRemove( void )
 {
+	FreePlayersInHoles();
 	HL2MPPortalWorld_RemoveCollider( this );
 	BaseClass::UpdateOnRemove();
 }
@@ -2382,8 +2440,24 @@ public:
 	virtual ShadowType_t	ShadowCastType() { return SHADOWS_NONE; }
 	virtual bool			ShouldReceiveProjectedTextures( int flags ) { return false; }
 
-	// Runs every frame after interpolation: follow the prop as it's drawn.
+	// Placed again right before drawing: the prop's drawn (interpolated)
+	// position is only final then. Placed from an earlier point in the frame,
+	// the copy trailed the prop and the two halves didn't line up.
+	virtual int DrawModel( int flags )
+	{
+		Follow();
+		if ( !m_bVisible )
+			return 0;
+		InvalidateBoneCache();
+		return BaseClass::DrawModel( flags );
+	}
+
 	virtual void Simulate()
+	{
+		Follow();
+	}
+
+	void Follow()
 	{
 		m_bVisible = false;
 		C_BaseEntity *pSource = m_hSource;
