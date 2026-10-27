@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.2 — Unreleased
+
+### Fixed
+- **Stuck in a portal whose exit is blocked by a prop.** Loose physics props at the exit no longer block players: they
+  get pushed out of the way along the exit's normal. Frozen props still block (they can't move).
+- **Props snapping back and forth across a portal.** The smooth-crossing handover now needs the prop's center 1 unit
+  past the plane (hysteresis) before swapping sides, so a prop resting on the plane no longer flips every tick.
+- Settings menu: the potato preset now runs, opens the menu and saves in one go; `portal_settings` opens the game UI
+  first when it's closed.
+
+### Added
+- Self-tests `gravgun_hold_steady` and `gravgun_hold_through_portal_steady`: hold a box with the gravity gun, away from
+  and through a portal, and measure how much it shakes.
+
 ## 0.5.1 — 2026-10-27
 
 ### Fixed

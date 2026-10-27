@@ -23,6 +23,8 @@
 #include "vphysics/friction.h"
 #include "world.h"
 
+extern bool PhysCannon_GetHeldObjectTarget( CBaseEntity *pObject, Vector *pTarget );
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -57,6 +59,12 @@ public:
 		m_flScenarioClosestF = m_flScenarioClosestW = FLT_MAX;
 		m_nSnapsBefore = m_nBoxTeleportsBefore = 0;
 		m_nSmoothTeleportsBefore = 0;
+		m_flAttack2Until = 0.0f;
+		m_bJitterTrack = m_bJitterPrev = false;
+		m_vecJitterPrev.Init();
+		m_flJitterMax = m_flJitterSum = 0.0f;
+		m_flJitterStart = -1.0f;
+		m_nJitterTicks = m_nJitterTeleports = m_nJitterTeleportsBefore = 0;
 		m_bSmoothCrossing = m_bSmoothNoWorld = false;
 		m_flSmoothPre = m_flSmoothPost = FLT_MAX;
 		m_flSmoothSupportIn = m_flSmoothSupportOut = 0.0f;
@@ -87,6 +95,7 @@ public:
 
 		DriveBot();
 		TrackSmoothBox();
+		TrackJitter();
 
 		// Things that go through and then blow up or fly off: note it while they exist.
 		if ( m_hRocket && CHL2MPPortal::WasTeleported( m_hRocket ) )
@@ -387,6 +396,50 @@ private:
 			CHL2MPPortal::IsCrossing( pEntity ), PhysEntityCollisionsAreDisabled( GetWorldEntity(), pEntity ) );
 	}
 
+	CBaseEntity *SpawnBoxInFront( CBasePlayer *pBot, float flDist )
+	{
+		Vector vecForward;
+		AngleVectors( m_angBot, &vecForward );
+		CBaseEntity *pBox = CreateEntityByName( "prop_physics" );
+		pBox->SetAbsOrigin( pBot->EyePosition() + vecForward * flDist );
+		pBox->KeyValue( "model", "models/props_junk/cardboard_box001a.mdl" );
+		pBox->Precache();
+		DispatchSpawn( pBox );
+		pBox->Activate();
+		return pBox;
+	}
+
+	void StartJitterTrack()
+	{
+		m_bJitterTrack = true;
+		m_bJitterPrev = false;
+		m_flJitterMax = m_flJitterSum = 0.0f;
+		m_nJitterTicks = 0;
+		m_nJitterTeleports = 0;
+		m_nJitterTeleportsBefore = m_hGravBox ? CHL2MPPortal::CountTeleports( m_hGravBox ) : 0;
+	}
+
+	// How much the held box moves per tick while the holder stands still
+	// (ticks where it went through a portal don't count).
+	void TrackJitter()
+	{
+		CBaseEntity *pBox = m_hGravBox;
+		if ( !m_bJitterTrack || !pBox )
+			return;
+		Vector vecPos = pBox->WorldSpaceCenter();
+		int nTeleports = CHL2MPPortal::CountTeleports( pBox ) - m_nJitterTeleportsBefore;
+		if ( m_bJitterPrev && nTeleports == m_nJitterTeleports )
+		{
+			float flMove = ( vecPos - m_vecJitterPrev ).Length();
+			m_flJitterMax = MAX( m_flJitterMax, flMove );
+			m_flJitterSum += flMove;
+			m_nJitterTicks++;
+		}
+		m_nJitterTeleports = nTeleports;
+		m_vecJitterPrev = vecPos;
+		m_bJitterPrev = true;
+	}
+
 	int BotSnaps()
 	{
 		return CHL2MPPortal::CountTeleports( m_hBot ) - m_nSnapsBefore;
@@ -402,6 +455,8 @@ private:
 		cmd.buttons = ( m_flBotForward > 0.0f ) ? IN_FORWARD : 0;
 		if ( gpGlobals->curtime < m_flAttackUntil )
 			cmd.buttons |= IN_ATTACK;
+		if ( gpGlobals->curtime < m_flAttack2Until )
+			cmd.buttons |= IN_ATTACK2;
 		pBot->ProcessUsercmds( &cmd, 1, 1, 0, false );
 
 		Vector vecCenter = pBot->WorldSpaceCenter();
@@ -426,7 +481,6 @@ private:
 		if ( gpGlobals->curtime < m_flHeldLogUntil && gpGlobals->curtime >= m_flNextHeldLog && m_hHeldBox && m_hFloor )
 		{
 			m_flNextHeldLog = gpGlobals->curtime + 0.25f;
-			extern bool PhysCannon_GetHeldObjectTarget( CBaseEntity *pObject, Vector *pTarget );
 			Vector vecTarget( 0, 0, 0 );
 			bool bTarget = PhysCannon_GetHeldObjectTarget( m_hHeldBox, &vecTarget );
 			Vector b = m_hHeldBox->WorldSpaceCenter();
@@ -1077,6 +1131,73 @@ private:
 				UTIL_Remove( pBox );
 			m_hSmoothBox = NULL;
 
+			// Bug report: a box held with the gravity gun twitches. Pick one up
+			// with secondary fire, facing away from the wall portal, and measure
+			// how much it moves per tick while held still.
+			CBasePlayer *pBot = ToBasePlayer( m_hBot );
+			CBaseCombatWeapon *pCannon = pBot->Weapon_OwnsThisType( "weapon_physcannon" );
+			if ( !pCannon )
+				pCannon = static_cast<CBaseCombatWeapon *>( pBot->GiveNamedItem( "weapon_physcannon" ) );
+			if ( pCannon )
+				pBot->Weapon_Switch( pCannon );
+			QAngle angOut;
+			VectorAngles( m_vecWallNormal, angOut );
+			PlaceBot( FloorBelow( m_hWall->GetAbsOrigin() + m_vecWallNormal * 58.0f ), angOut, vec3_origin );
+			m_hGravBox = SpawnBoxInFront( pBot, 70.0f );
+			m_flAttack2Until = gpGlobals->curtime + 0.3f;
+			Wait( 1.5f );
+			return;
+		}
+
+		case 22:
+		{
+			StartJitterTrack();
+			Wait( 2.0f );
+			return;
+		}
+
+		case 23:
+		{
+			CBaseEntity *pBox = m_hGravBox;
+			Vector vecTarget;
+			bool bHeld = pBox && PhysCannon_GetHeldObjectTarget( pBox, &vecTarget );
+			float flAvg = m_nJitterTicks ? m_flJitterSum / m_nJitterTicks : -1.0f;
+			Result( "gravgun_hold_steady", bHeld && m_nJitterTicks > 0 && m_flJitterMax < 1.0f && flAvg < 0.2f,
+				"held=%d ticks=%d max_move_per_tick=%.2f avg=%.3f", bHeld, m_nJitterTicks, m_flJitterMax, flAvg );
+
+			// Held through the wall portal: turn to face it (the hold point is
+			// past the plane, the box out of the floor portal) and measure again.
+			QAngle angIn;
+			VectorAngles( -m_vecWallNormal, angIn );
+			m_angBot = angIn;
+			ToBasePlayer( m_hBot )->SnapEyeAngles( m_angBot );
+			Wait( 1.5f );
+			return;
+		}
+
+		case 24:
+		{
+			if ( m_flJitterStart < 0.0f || gpGlobals->curtime < m_flJitterStart + 1.0f )
+			{
+				// First pass here: start measuring the through-portal hold.
+				StartJitterTrack();
+				m_flJitterStart = gpGlobals->curtime;
+				Wait( 2.0f );
+				m_iStep--;	// come back to this step
+				return;
+			}
+			CBaseEntity *pBox = m_hGravBox;
+			Vector vecTarget;
+			bool bHeld = pBox && PhysCannon_GetHeldObjectTarget( pBox, &vecTarget );
+			float flAvg = m_nJitterTicks ? m_flJitterSum / m_nJitterTicks : -1.0f;
+			Result( "gravgun_hold_through_portal_steady", bHeld && m_nJitterTeleports <= 1 && m_flJitterMax < 2.0f && flAvg < 0.3f,
+				"held=%d ticks=%d teleports=%d max_move_per_tick=%.2f avg=%.3f", bHeld, m_nJitterTicks, m_nJitterTeleports, m_flJitterMax, flAvg );
+			m_hGravBox = NULL;
+			ToBasePlayer( m_hBot )->ForceDropOfCarriedPhysObjects( NULL );
+			if ( pBox )
+				UTIL_Remove( pBox );
+			m_flJitterStart = -1.0f;
+
 			// Bug report: two floor portals: you go higher and higher. Move the
 			// wall portal onto the floor nearby and drop the bot into one.
 			Vector vecRight, vecUp;
@@ -1114,7 +1235,7 @@ private:
 			return;
 		}
 
-		case 22:
+		case 25:
 		{
 			m_flLoopStart = -1.0f;
 			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
@@ -1167,6 +1288,12 @@ private:
 	float	m_flFastFallMin;
 	EHANDLE	m_hBlocker;
 	EHANDLE	m_hSmoothBox;
+	EHANDLE	m_hGravBox;
+	float	m_flAttack2Until;
+	bool	m_bJitterTrack, m_bJitterPrev;
+	Vector	m_vecJitterPrev;
+	float	m_flJitterMax, m_flJitterSum, m_flJitterStart;
+	int		m_nJitterTicks, m_nJitterTeleports, m_nJitterTeleportsBefore;
 	int		m_nSmoothTeleportsBefore;
 	bool	m_bSmoothCrossing, m_bSmoothNoWorld;
 	float	m_flSmoothPre, m_flSmoothPost, m_flSmoothSupportIn, m_flSmoothSupportOut;

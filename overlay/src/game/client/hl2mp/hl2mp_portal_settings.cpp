@@ -116,6 +116,13 @@ public:
 		SetSize( Scale( WINDOW_WIDE ), Scale( WINDOW_TALL ) );
 		MoveToCenterOfScreen();
 		Activate();
+
+		// The window is a child of the main menu panel: bring that up too, or
+		// a portal_settings typed from a bind or the console is invisible in game.
+		if ( !enginevgui->IsGameUIVisible() )
+		{
+			engine->ClientCmd_Unrestricted( "gameui_activate\n" );
+		}
 	}
 
 	virtual void OnCommand( const char *pszCommand )
@@ -136,8 +143,9 @@ public:
 		}
 		if ( !Q_stricmp( pszCommand, "potato" ) )
 		{
-			engine->ClientCmd_Unrestricted( "exec potato\n" );
-			Open();		// it changes portal settings too
+			// The command buffer runs after this returns, so reopening right
+			// away would still show the old values: reopen from the buffer.
+			engine->ClientCmd_Unrestricted( "exec potato\nportal_settings\nhost_writeconfig\n" );
 			return;
 		}
 		BaseClass::OnCommand( pszCommand );

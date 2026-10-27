@@ -103,6 +103,10 @@ ConVar cl_portal_render_views( "cl_portal_render_views", "1", FCVAR_ARCHIVE, "Re
 #define PORTAL_TOUCH_DIST		1.0f
 // How far past the plane a held object's hold point must be before it goes through.
 #define PORTAL_HELD_THROUGH_DIST	2.0f
+// How far past the plane a sliding prop's center must be before it's handed
+// to the other portal. It lands this far in front of that one, so going back
+// takes twice this: one at rest on the threshold doesn't flip every tick.
+#define PORTAL_CROSS_HYSTERESIS		1.0f
 // Depth of the detection volume in front of / behind the plane.
 #define PORTAL_DETECT_FRONT		160.0f
 #define PORTAL_DETECT_BACK		8.0f
@@ -428,7 +432,7 @@ bool CHL2MPPortal::GetHoleFitShift( const Vector &vecCenter, const Vector &vecHa
 }
 
 // What can block a portal's exit: anything a player can't push out of the
-// way. Loose physics props (a can, a held box) never do.
+// way. Loose physics props (a can, a held box) never do; frozen ones do.
 class CPortalExitFilter : public CTraceFilterSimple
 {
 public:
@@ -436,9 +440,18 @@ public:
 
 	virtual bool ShouldHitEntity( IHandleEntity *pHandleEntity, int contentsMask )
 	{
+		// Loose props get pushed out of the way (see PushPropOutOfExit); frozen
+		// ones block like a wall.
 		CBaseEntity *pEntity = EntityFromEntityHandle( pHandleEntity );
 		if ( pEntity && pEntity->GetMoveType() == MOVETYPE_VPHYSICS )
+		{
+#ifdef GAME_DLL
+			IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
+			if ( pPhys && !pPhys->IsMoveable() )
+				return CTraceFilterSimple::ShouldHitEntity( pHandleEntity, contentsMask );
+#endif
 			return false;
+		}
 		return CTraceFilterSimple::ShouldHitEntity( pHandleEntity, contentsMask );
 	}
 };
@@ -622,6 +635,30 @@ static bool TracePlayerHullLocalWorld( CHL2MPPortal *pPortal, const Vector &vecS
 	{
 		TraceBackPartThroughPortal( pPortal, vecStart, vecEnd, vecBackMins, vecBackMaxs, mask, &filter, &trBack );
 	}
+
+#ifdef GAME_DLL
+	// A loose prop in front of the exit, where the part of the player that's
+	// through would be: push it out of the way, as walking into it would.
+	// (The player's physics shadow is on this side and can't reach it.)
+	if ( ( trBack.fraction < 1.0f || trBack.startsolid ) && trBack.m_pEnt && trBack.m_pEnt->GetMoveType() == MOVETYPE_VPHYSICS )
+	{
+		IPhysicsObject *pPhys = trBack.m_pEnt->VPhysicsGetObject();
+		if ( pPhys && pPhys->IsMoveable() && !( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
+		{
+			Vector vecExitForward = pPortal->GetLinkedPortal()->GetSurfaceNormal();
+			Vector vecVelocity;
+			pPhys->GetVelocity( &vecVelocity, NULL );
+			float flOut = DotProduct( vecVelocity, vecExitForward );
+			const float flPushSpeed = 150.0f;
+			if ( flOut < flPushSpeed )
+			{
+				vecVelocity += vecExitForward * ( flPushSpeed - flOut );
+				pPhys->SetVelocity( &vecVelocity, NULL );
+			}
+			pPhys->Wake();
+		}
+	}
+#endif
 
 	// First hit wins; starting stuck in anything wins outright.
 	trace_t *pBest = &trWorld;
@@ -1673,7 +1710,7 @@ void CHL2MPPortal::UpdateCrossings()
 
 		// Center through: carry it to the other side, still straddling, into
 		// that portal's local world.
-		if ( flCenterDist < 0.0f && !bHeldBack )
+		if ( flCenterDist < -PORTAL_CROSS_HYSTERESIS && !bHeldBack )
 		{
 			CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
 			if ( HL2MPPortalWorld_SyncCollider( pLinked ) > 0 && pPortal->TeleportEntity( pEntity, true ) )
