@@ -166,10 +166,11 @@ public:
 	int				m_iViewSlot[HL2MP_PORTAL_MAX_DEPTH];
 	int				m_iViewStamp[HL2MP_PORTAL_MAX_DEPTH];
 
-private:
-	// How deep the tunnel behind the surface can go without poking out of the
-	// back of a thin wall; measured once per placement.
+	// How deep the tunnel behind the surface goes (the wall's thickness, at
+	// least deeper than the near plane); measured once per placement.
 	float			GetTunnelDepth();
+
+private:
 	float			m_flTunnelDepth;
 	int				m_nTunnelVersion;
 #endif

@@ -18,6 +18,13 @@
   overrides (`cl_portal_render_views`, `cl_portal_max_views`, `cl_portal_recursion`) that could silently undo the
   menu are reset by it. The layout is measured from the font in use, so it fits at any resolution and UI scale.
   The potato preset runs, reopens the window and saves in one go.
+- **Portal views froze.** When a portal's live view stopped being drawn (Automatic dropping to Off when the FPS dipped,
+  portal-in-portal views turning off, too many portals on screen) it kept showing its last image instead of turning
+  solid. Each frame now invalidates last frame's views first.
+- **Flicker walking through a portal in a thin wall.** The tunnel drawn behind the portal surface (it covers the gap
+  when the camera's near plane cuts into the wall) was only as deep as the wall, so in a thin wall the near plane
+  reached past it and the room behind flashed for a frame. It's now at least 16 units deep, and a camera a little
+  behind the plane (inside the hole) keeps the live view and the tunnel instead of losing both.
 - A player standing near a portal no longer shoves props flying past the exit (the blocked-exit push only applies
   while moving in).
 

@@ -235,7 +235,7 @@ index 4283c3b..7d1d6be 100644
  						if ( pTracerName )
  						{
 diff --git a/src/game/client/viewrender.cpp b/src/game/client/viewrender.cpp
-index b4011e2..a91cdd9 100644
+index b4011e2..ba9d3a4 100644
 --- a/src/game/client/viewrender.cpp
 +++ b/src/game/client/viewrender.cpp
 @@ -75,6 +75,10 @@
@@ -292,7 +292,7 @@ index b4011e2..a91cdd9 100644
  #ifdef PORTAL
  	switch( g_pPortalRender->ShouldForceCheaperWaterLevel() )
  	{
-@@ -3237,6 +3263,397 @@ bool CViewRender::DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_Poin
+@@ -3237,6 +3263,409 @@ bool CViewRender::DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_Poin
  	return true;
  }
  
@@ -469,8 +469,12 @@ index b4011e2..a91cdd9 100644
 +		if ( pClipPortal && DotProduct( pClipPortal->GetSurfaceNormal(), pPortal->GetAbsOrigin() - pClipPortal->GetAbsOrigin() ) <= 0.0f )
 +			continue;
 +
++		// In front, or just behind it in the hole (walking through: the view
++		// keeps going while the camera is in the tunnel behind the surface).
 +		Vector vToView = view.origin - pPortal->GetAbsOrigin();
-+		if ( DotProduct( vToView, pPortal->GetSurfaceNormal() ) <= 0.0f )
++		float flViewDist = DotProduct( vToView, pPortal->GetSurfaceNormal() );
++		if ( flViewDist <= 0.0f && ( pClipPortal || flViewDist < -pPortal->GetTunnelDepth() ||
++			!pPortal->IsPointInEllipse( view.origin - pPortal->GetSurfaceNormal() * flViewDist ) ) )
 +			continue;
 +
 +		HL2MPPortalScreenRect_t rect;
@@ -591,6 +595,15 @@ index b4011e2..a91cdd9 100644
 +
 +void CViewRender::DrawHL2MPPortalViews( const CViewSetup &mainView )
 +{
++	// A new frame: views rendered last frame are stale, whether or not any
++	// get rendered now. (Bumped only when views were drawn, a portal whose
++	// views stopped, e.g. auto dropping to off or recursion turned off, kept
++	// showing its last image, frozen.)
++	for ( int i = 0; i < HL2MP_PORTAL_MAX_DEPTH; i++ )
++	{
++		g_iHL2MPPortalViewStamp[i]++;
++	}
++
 +	bool bRendered = false;
 +	if ( cl_portal_render_views.GetBool() && C_HL2MPPortal::GetPortalCount() > 0 )
 +	{
@@ -622,7 +635,6 @@ index b4011e2..a91cdd9 100644
 +{
 +	VMatrix matWorldToView, matViewToProjection, matWorldToPixels;
 +	render->GetMatricesForView( mainView, &matWorldToView, &matViewToProjection, &g_matHL2MPPortalWorldToProjection[0], &matWorldToPixels );
-+	g_iHL2MPPortalViewStamp[0]++;
 +
 +	// Portal views are rendered at a fraction of the screen's size (into the top
 +	// left of their target) with the same projection, so screen positions and

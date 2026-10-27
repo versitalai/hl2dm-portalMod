@@ -259,7 +259,11 @@ Classic render-to-texture portal, done with stock SDK pieces (no custom shaders,
 6. **Server side of it**: `CHL2MP_Player::SetupVisibility` adds the exit side of every open portal in the player's PVS,
    so entities over there are networked and actually show up in the view.
 
-Views run every frame, so what you see through a portal is live.
+Views run every frame, so what you see through a portal is live. `DrawHL2MPPortalViews` bumps the view stamps at
+the start of every frame, so a portal whose view wasn't rendered this frame draws solid rather than a stale image.
+Near the surface a **tunnel** (ellipse walls + cap, at least 16 deep, screen-space mapped like the surface) is drawn
+behind the plane: when the near plane clips the wall it keeps showing the far side, and a camera slightly behind
+the plane inside the hole still gets its view and the tunnel.
 
 ### Cost and quality levels
 

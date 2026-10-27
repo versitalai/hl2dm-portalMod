@@ -2235,6 +2235,12 @@ static void DrawPortalRim( const Vector &vCenter, const Vector &vRight, const Ve
 }
 
 #define PORTAL_TUNNEL_DEPTH			24.0f
+// At least this deep even in a thin wall: the near plane (7 units) must not
+// reach past the end of it in the last frames before the camera goes through,
+// or the room behind the wall flickers into view. Past the back of the wall
+// it's still only drawn for a camera right in front of the portal, where it
+// stands in for the far side.
+#define PORTAL_TUNNEL_MIN_DEPTH		16.0f
 // The tunnel is only needed when the camera is close enough to the plane for
 // the near plane to clip the wall and the surface.
 #define PORTAL_TUNNEL_DRAW_DIST		32.0f
@@ -2255,7 +2261,7 @@ float C_HL2MPPortal::GetTunnelDepth()
 	{
 		flThickness = tr.fractionleftsolid * PORTAL_TUNNEL_DEPTH * 2.0f;
 	}
-	m_flTunnelDepth = clamp( flThickness - 1.0f, 0.0f, PORTAL_TUNNEL_DEPTH );
+	m_flTunnelDepth = clamp( flThickness - 1.0f, PORTAL_TUNNEL_MIN_DEPTH, PORTAL_TUNNEL_DEPTH );
 	m_nTunnelVersion = m_nFrameVersion;
 	return m_flTunnelDepth;
 }
@@ -2272,9 +2278,17 @@ int C_HL2MPPortal::DrawModel( int flags )
 	bool bBlue = ( m_iPortalType == HL2MP_PORTAL_BLUE );
 	color32 rimColor = bBlue ? color32{ 64, 160, 255, 255 } : color32{ 255, 140, 20, 255 };
 
-	// Only draw from the front.
-	if ( DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward ) < 0.0f )
-		return 0;
+	// Only draw from the front. A camera a little behind the plane, in the
+	// hole (a frame of smoothing as you walk through), is in the tunnel: draw
+	// just that, or the inside of the wall flickers into view.
+	float flViewDist = DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward );
+	bool bInTunnel = false;
+	if ( flViewDist < 0.0f )
+	{
+		if ( flViewDist < -GetTunnelDepth() || !IsPointInEllipse( CurrentViewOrigin() - vForward * flViewDist ) )
+			return 0;
+		bInTunnel = true;
+	}
 
 	// A live view exists for this portal at this depth if one was rendered
 	// for the view being drawn (main view, or the portal view it's inside).
@@ -2289,10 +2303,12 @@ int C_HL2MPPortal::DrawModel( int flags )
 	{
 		color32 white = { 255, 255, 255, 255 };
 		float flTunnelDepth = GetTunnelDepth();
-		if ( flTunnelDepth > 1.0f && DotProduct( CurrentViewOrigin() - GetAbsOrigin(), vForward ) < PORTAL_TUNNEL_DRAW_DIST )
+		if ( flTunnelDepth > 1.0f && flViewDist < PORTAL_TUNNEL_DRAW_DIST )
 		{
 			DrawPortalTunnel( GetPortalViewMaterial( iSlot ), GetAbsOrigin(), vForward, vRight, vUp, flTunnelDepth );
 		}
+		if ( bInTunnel )
+			return 1;
 		// Close up the screen-space mapping needs fine tessellation; far away it's nearly affine.
 		float flDist = ( CurrentViewOrigin() - GetAbsOrigin() ).Length();
 		int nRings = ( flDist < 256.0f ) ? PORTAL_MESH_RINGS : ( flDist < 1024.0f ) ? 6 : 3;
@@ -2300,6 +2316,8 @@ int C_HL2MPPortal::DrawModel( int flags )
 	}
 	else
 	{
+		if ( bInTunnel )
+			return 0;
 		// Closed portals are dark; open portals we can't render through are brighter.
 		color32 fill;
 		if ( IsOpen() )
