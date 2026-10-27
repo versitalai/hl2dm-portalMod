@@ -84,7 +84,9 @@ jobs:
       - name: Generate solution
         shell: cmd
         working-directory: sdk/src
-        run: devtools\bin\vpc.exe /hl2mp /define:SOURCESDK +everything /mksln hl2mp.sln
+        # Only the game group (client, server and the libraries they link): +everything
+        # also builds the SDK map/model tools (vbsp, vrad, vvis, ...), unused here.
+        run: devtools\bin\vpc.exe /hl2mp /define:SOURCESDK +game /mksln hl2mp.sln
       - name: Build
         shell: cmd
         working-directory: sdk/src
