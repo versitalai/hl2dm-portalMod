@@ -83,7 +83,8 @@ The gun is in weapon slot 1 (with crowbar / gravity gun). Portals are removed wh
 
 Seeing through a portal means drawing the scene again, so portals are the mod's main cost. Pick a quality in
 **Portal Settings** in the main menu (every option explained there), the `portal_settings` console command, or with
-`cl_portal_quality` in the console:
+`cl_portal_quality` in the console. In the window, changes apply right away and a line at the top shows what's being
+drawn and your FPS (Cancel puts the old values back). The menu names are Automatic / Best / Balanced / Fast / Off:
 
 | `cl_portal_quality` | Live views | Portal-in-portal | View resolution | Solid if smaller than |
 |---|---|---|---|---|
@@ -115,6 +116,7 @@ saved. On a weak GPU, a lower screen resolution (Options > Video) helps most.
 | `sv_portal_local_world` | 1 | server, replicated | Players near a portal collide with its local world (wall with the hole cut out + the other side); 0 = old approximation |
 | `sv_portal_world_draw` | 0 | server (cheat) | Outline the pieces of each portal's local collision world |
 | `sv_portal_smooth_props` | 1 | server | Physics props that fit the hole slide through (0 = they pop through whole) |
+| `cl_physcannon_predict_held` | 0 | client | 1 = your PC also simulates what you hold with the gravity gun (stock; snappier but can shake). 0 = smooth server position |
 | `cl_portal_prop_clones` | 1 | client | Draw the part of a sliding prop that's come out of the other portal |
 | `sv_portal_cooldown` | 0.05 | server | Seconds before an entity can go through again |
 | `sv_portal_debug` | 0 | server (cheat) | Draw detection volumes, placement traces, exit boxes |

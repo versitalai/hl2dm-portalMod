@@ -10,8 +10,16 @@
 - **Held box twitching at a portal.** A box held right at a portal's plane (not yet through) was pushed against the
   real wall around the hole by the hold, and shook. It now slides into the hole like a loose prop (smooth crossing)
   and only goes across once the hold point does. Self-test: `gravgun_hold_through_portal_steady`.
-- Settings menu: the potato preset now runs, opens the menu and saves in one go; `portal_settings` opens the game UI
-  first when it's closed.
+- **Gravity gun: held objects shook (everywhere).** Your game simulated the held object too and fought the server's
+  position as it arrived. It now shows the server's (steady) position, smoothed; `cl_physcannon_predict_held 1` brings
+  back the stock behavior.
+- **Portal Settings window rebuilt.** Plain names (Automatic / Best / Balanced / Fast / Off, sharpness, FPS to keep),
+  changes apply immediately with a status line showing what's drawn and your FPS, Cancel restores. Console-only
+  overrides (`cl_portal_render_views`, `cl_portal_max_views`, `cl_portal_recursion`) that could silently undo the
+  menu are reset by it. The layout is measured from the font in use, so it fits at any resolution and UI scale.
+  The potato preset runs, reopens the window and saves in one go.
+- A player standing near a portal no longer shoves props flying past the exit (the blocked-exit push only applies
+  while moving in).
 
 ### Added
 - **Interact through portals.** `+use` (buttons, chargers, picking things up), gravity gun pickup, pull and punt,

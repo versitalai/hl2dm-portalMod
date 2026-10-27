@@ -235,7 +235,7 @@ index 4283c3b..7d1d6be 100644
  						if ( pTracerName )
  						{
 diff --git a/src/game/client/viewrender.cpp b/src/game/client/viewrender.cpp
-index b4011e2..26ce7b3 100644
+index b4011e2..a91cdd9 100644
 --- a/src/game/client/viewrender.cpp
 +++ b/src/game/client/viewrender.cpp
 @@ -75,6 +75,10 @@
@@ -292,7 +292,7 @@ index b4011e2..26ce7b3 100644
  #ifdef PORTAL
  	switch( g_pPortalRender->ShouldForceCheaperWaterLevel() )
  	{
-@@ -3237,6 +3263,379 @@ bool CViewRender::DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_Poin
+@@ -3237,6 +3263,397 @@ bool CViewRender::DrawOneMonitor( ITexture *pRenderTarget, int cameraNum, C_Poin
  	return true;
  }
  
@@ -381,6 +381,18 @@ index b4011e2..26ce7b3 100644
 +			s_HL2MPPortalQuality[s_iPortalAutoLevel].pszName, 1.0f / MAX( s_flPortalAvgFrameTime, 0.001f ), cl_portal_auto_fps.GetFloat() );
 +	}
 +	return s_iPortalAutoLevel;
++}
++
++// What portal views the last frame drew (shown in the Portal Settings window).
++static const char *s_pszPortalLastLevel = "off";
++static int s_nPortalLastViews = 0;
++static float s_flPortalLastResolution = 0.0f;
++
++void HL2MPPortal_GetRenderStatus( const char **ppszLevel, int *pnViews, float *pflResolution )
++{
++	*ppszLevel = s_pszPortalLastLevel;
++	*pnViews = s_nPortalLastViews;
++	*pflResolution = s_flPortalLastResolution;
 +}
 +
 +// Screen bounds of a portal in normalized device coordinates (-1..1).
@@ -586,14 +598,20 @@ index b4011e2..26ce7b3 100644
 +		const HL2MPPortalQuality_t &quality = s_HL2MPPortalQuality[iLevel];
 +		s_bHL2MPPortalCheapWater = ( iLevel < HL2MP_PORTAL_QUALITY_TOP );
 +		int nViews = MIN( MIN( quality.nViews, cl_portal_max_views.GetInt() ), HL2MP_PORTAL_MAX_PRIMARY_VIEWS );
++		float flResolution = clamp( MIN( quality.flResolution, cl_portal_resolution.GetFloat() ), 0.25f, 1.0f );
 +		if ( nViews > 0 )
 +		{
 +			bRendered = DrawHL2MPPortalViewsAtQuality( mainView, nViews, quality.bRecursion && cl_portal_recursion.GetBool(),
-+				MIN( quality.flResolution, cl_portal_resolution.GetFloat() ), quality.flMinScreen );
++				flResolution, quality.flMinScreen );
 +		}
++		s_pszPortalLastLevel = quality.pszName;
++		s_nPortalLastViews = nViews;
++		s_flPortalLastResolution = flResolution;
 +	}
 +	else
 +	{
++		s_pszPortalLastLevel = cl_portal_render_views.GetBool() ? "no portals open" : "off";
++		s_nPortalLastViews = 0;
 +		// Keep auto's frame time average current while nothing is drawn.
 +		HL2MPPortal_GetQualityLevel();
 +	}
@@ -1608,10 +1626,23 @@ index 336cfcb..49d398e 100644
  		float bludgeonHullRadius = 1.732f * BLUDGEON_HULL_DIM;  // hull is +/- 16, so use cuberoot of 2 to determine how big the hull is from center to the corner point
  
 diff --git a/src/game/shared/hl2mp/weapon_physcannon.cpp b/src/game/shared/hl2mp/weapon_physcannon.cpp
-index 26fdfef..34bae82 100644
+index 26fdfef..0103033 100644
 --- a/src/game/shared/hl2mp/weapon_physcannon.cpp
 +++ b/src/game/shared/hl2mp/weapon_physcannon.cpp
-@@ -278,6 +278,7 @@ CGrabController::CGrabController( void )
+@@ -71,6 +71,12 @@ extern ConVar hl2_walkspeed;
+ 
+ #ifdef CLIENT_DLL
+ 
++// Portal mod: the client also simulating the held object (stock) fought the
++// server's position as it arrived, and the object shook while held. The
++// server's hold is steady; drawing that (interpolated) is smooth.
++ConVar cl_physcannon_predict_held( "cl_physcannon_predict_held", "0", FCVAR_ARCHIVE,
++	"Simulate the object you hold with the gravity gun on your side too (stock: snappier, but it can shake). 0 = show the server's smooth position." );
++
+ 	//Precahce the effects
+ 	CLIENTEFFECT_REGISTER_BEGIN( PrecacheEffectPhysCannon )
+ 	CLIENTEFFECT_MATERIAL( "sprites/orangelight1" )
+@@ -278,6 +284,7 @@ CGrabController::CGrabController( void )
  	m_shadow.maxDampSpeed = m_shadow.maxSpeed*2;
  	m_shadow.maxDampAngular = m_shadow.maxAngular;
  	m_attachedEntity = NULL;
@@ -1619,7 +1650,7 @@ index 26fdfef..34bae82 100644
  	m_vecPreferredCarryAngles = vec3_angle;
  	m_bHasPreferredCarryAngles = false;
  }
-@@ -444,6 +445,8 @@ void CGrabController::AttachEntity( CBasePlayer *pPlayer, CBaseEntity *pEntity,
+@@ -444,6 +451,8 @@ void CGrabController::AttachEntity( CBasePlayer *pPlayer, CBaseEntity *pEntity,
  		PhysicsImpactSound( pPlayer, pPhys, CHAN_STATIC, pPhys->GetMaterialIndex(), pPlayer->VPhysicsGetObject()->GetMaterialIndex(), 1.0, 64 );
  	}
  #endif
@@ -1628,7 +1659,7 @@ index 26fdfef..34bae82 100644
  	Vector position;
  	QAngle angles;
  	pPhys->GetPosition( &position, &angles );
-@@ -535,8 +538,125 @@ static void ClampPhysicsVelocity( IPhysicsObject *pPhys, float linearLimit, floa
+@@ -535,8 +544,125 @@ static void ClampPhysicsVelocity( IPhysicsObject *pPhys, float linearLimit, floa
  	pPhys->AddVelocity( &vel, &angVel );
  }
  
@@ -1754,7 +1785,7 @@ index 26fdfef..34bae82 100644
  	CBaseEntity *pEntity = GetAttached();
  	if ( pEntity )
  	{
-@@ -718,6 +838,11 @@ void CPlayerPickupController::Init( CBasePlayer *pPlayer, CBaseEntity *pObject )
+@@ -718,6 +844,11 @@ void CPlayerPickupController::Init( CBasePlayer *pPlayer, CBaseEntity *pObject )
  	Pickup_OnPhysGunPickup( pObject, m_pPlayer );
  	
  	m_grabController.AttachEntity( pPlayer, pObject, pPhysics, false, vec3_origin, false );
@@ -1766,7 +1797,7 @@ index 26fdfef..34bae82 100644
  	
  	m_pPlayer->m_Local.m_iHideHUD |= HIDEHUD_WEAPONSELECTION;
  	m_pPlayer->SetUseEntity( this );
-@@ -810,9 +935,11 @@ void CPlayerPickupController::Use( CBaseEntity *pActivator, CBaseEntity *pCaller
+@@ -810,9 +941,11 @@ void CPlayerPickupController::Use( CBaseEntity *pActivator, CBaseEntity *pCaller
  		// +ATTACK will throw phys objects
  		if ( m_pPlayer->m_nButtons & IN_ATTACK )
  		{
@@ -1779,7 +1810,7 @@ index 26fdfef..34bae82 100644
  			// JAY: Scale this with mass because some small objects really go flying
  			float massFactor = clamp( pPhys->GetMass(), 0.5, 15 );
  			massFactor = RemapVal( massFactor, 0.5, 15, 0.5, 4 );
-@@ -878,6 +1005,7 @@ BEGIN_NETWORK_TABLE( CWeaponPhysCannon, DT_WeaponPhysCannon )
+@@ -878,6 +1011,7 @@ BEGIN_NETWORK_TABLE( CWeaponPhysCannon, DT_WeaponPhysCannon )
  	RecvPropFloat( RECVINFO( m_attachedAnglesPlayerSpace[2] ) ),
  	RecvPropInt( RECVINFO( m_EffectState ) ),
  	RecvPropBool( RECVINFO( m_bOpen ) ),
@@ -1787,7 +1818,7 @@ index 26fdfef..34bae82 100644
  #else
  	SendPropBool( SENDINFO( m_bActive ) ),
  	SendPropEHandle( SENDINFO( m_hAttachedObject ) ),
-@@ -887,6 +1015,7 @@ BEGIN_NETWORK_TABLE( CWeaponPhysCannon, DT_WeaponPhysCannon )
+@@ -887,6 +1021,7 @@ BEGIN_NETWORK_TABLE( CWeaponPhysCannon, DT_WeaponPhysCannon )
  	SendPropAngle( SENDINFO_VECTORELEM(m_attachedAnglesPlayerSpace, 2 ), 11 ),
  	SendPropInt( SENDINFO( m_EffectState ) ),
  	SendPropBool( SENDINFO( m_bOpen ) ),
@@ -1795,7 +1826,7 @@ index 26fdfef..34bae82 100644
  #endif
  END_NETWORK_TABLE()
  
-@@ -1453,7 +1582,11 @@ void CWeaponPhysCannon::PrimaryAttack( void )
+@@ -1453,7 +1588,11 @@ void CWeaponPhysCannon::PrimaryAttack( void )
  		CBaseEntity *pHeld = m_grabController.GetAttached();
  		Assert( pHeld != NULL );
  
@@ -1808,7 +1839,7 @@ index 26fdfef..34bae82 100644
  		{
  			float heldDist = ( pHeld->WorldSpaceCenter() - pOwner->WorldSpaceCenter() ).Length();
  
-@@ -1487,7 +1620,10 @@ void CWeaponPhysCannon::PrimaryAttack( void )
+@@ -1487,7 +1626,10 @@ void CWeaponPhysCannon::PrimaryAttack( void )
  
  	CTraceFilterNoOwnerTest filter( pOwner, COLLISION_GROUP_NONE );
  	trace_t tr;
@@ -1820,7 +1851,7 @@ index 26fdfef..34bae82 100644
  	bool bValid = true;
  	CBaseEntity *pEntity = tr.m_pEnt;
  	if ( tr.fraction == 1 || !tr.m_pEnt || tr.m_pEnt->IsEFlagSet( EFL_NO_PHYSCANNON_INTERACTION ) )
-@@ -1502,7 +1638,8 @@ void CWeaponPhysCannon::PrimaryAttack( void )
+@@ -1502,7 +1644,8 @@ void CWeaponPhysCannon::PrimaryAttack( void )
  	// If the entity we've hit is invalid, try a traceline instead
  	if ( !bValid )
  	{
@@ -1830,7 +1861,7 @@ index 26fdfef..34bae82 100644
  		if ( tr.fraction == 1 || !tr.m_pEnt || tr.m_pEnt->IsEFlagSet( EFL_NO_PHYSCANNON_INTERACTION ) )
  		{
  			// Play dry-fire sequence
-@@ -1512,6 +1649,7 @@ void CWeaponPhysCannon::PrimaryAttack( void )
+@@ -1512,6 +1655,7 @@ void CWeaponPhysCannon::PrimaryAttack( void )
  
  		pEntity = tr.m_pEnt;
  	}
@@ -1838,7 +1869,7 @@ index 26fdfef..34bae82 100644
  
  	// See if we hit something
  	if ( pEntity->GetMoveType() != MOVETYPE_VPHYSICS )
-@@ -1714,12 +1852,21 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
+@@ -1714,12 +1858,21 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
  	// Try to find an object by looking straight ahead
  	trace_t tr;
  	CTraceFilterNoOwnerTest filter( pPlayer, COLLISION_GROUP_NONE );
@@ -1862,7 +1893,7 @@ index 26fdfef..34bae82 100644
  	}
  
  	CBaseEntity *pEntity = tr.m_pEnt ? tr.m_pEnt->GetRootMoveParent() : NULL;
-@@ -1750,6 +1897,8 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
+@@ -1750,6 +1903,8 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
  
  	if ( pConeEntity )
  	{
@@ -1871,7 +1902,7 @@ index 26fdfef..34bae82 100644
  		pEntity = pConeEntity;
  
  		// If the object is near, grab it. Else, pull it a bit.
-@@ -1782,7 +1931,11 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
+@@ -1782,7 +1937,11 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
  
  	if ( bAttach )
  	{
@@ -1884,7 +1915,7 @@ index 26fdfef..34bae82 100644
  	}
  
  	if ( !bPull )
-@@ -1795,6 +1948,22 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
+@@ -1795,6 +1954,22 @@ CWeaponPhysCannon::FindObjectResult_t CWeaponPhysCannon::FindObject( void )
  
  	// If we're too far, simply start to pull the object towards us
  	Vector	pullDir = start - pEntity->WorldSpaceCenter();
@@ -1907,7 +1938,7 @@ index 26fdfef..34bae82 100644
  	VectorNormalize( pullDir );
  	pullDir *= physcannon_pullforce.GetFloat();
  	
-@@ -1901,9 +2070,18 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+@@ -1901,9 +2076,18 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
  
  	trace_t	tr;
  	CTraceFilterSkipTwoEntities traceFilter( pPlayer, pEntity, COLLISION_GROUP_NONE );
@@ -1929,7 +1960,7 @@ index 26fdfef..34bae82 100644
  
  	if ( tr.fraction < 0.5 )
  	{
-@@ -1977,7 +2155,25 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
+@@ -1977,7 +2161,25 @@ bool CGrabController::UpdateObject( CBasePlayer *pPlayer, float flError )
  	AngleMatrix( angles, attachedToWorld );
  	VectorRotate( m_attachedPositionObjectSpace, attachedToWorld, offset );
  
@@ -1956,7 +1987,7 @@ index 26fdfef..34bae82 100644
  
  	return true;
  }
-@@ -1999,6 +2195,8 @@ void CWeaponPhysCannon::UpdateObject( void )
+@@ -1999,6 +2201,8 @@ void CWeaponPhysCannon::UpdateObject( void )
  //-----------------------------------------------------------------------------
  void CWeaponPhysCannon::DetachObject( bool playSound, bool wasLaunched )
  {
@@ -1965,18 +1996,18 @@ index 26fdfef..34bae82 100644
  #ifndef CLIENT_DLL
  	// misyl: Disable pred filtering in this server-only section.
  	CDisablePredictionFiltering disablePred;
-@@ -2061,7 +2259,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
+@@ -2061,7 +2265,9 @@ void CWeaponPhysCannon::ManagePredictedObject( void )
  {
  	CBaseEntity *pAttachedObject = m_hAttachedObject.Get();
  
 -	if ( m_hAttachedObject )
 +	// Held through a portal: show the server's position instead of predicting
 +	// it (the client doesn't know which portals it went through).
-+	if ( m_hAttachedObject && m_nHeldPortalCount == 0 )
++	if ( m_hAttachedObject && m_nHeldPortalCount == 0 && cl_physcannon_predict_held.GetBool() )
  	{
  		// NOTE :This must happen after OnPhysGunPickup because that can change the mass
  		if ( pAttachedObject != GetGrabController().GetAttached() )
-@@ -2202,7 +2402,10 @@ void CWeaponPhysCannon::CheckForTarget( void )
+@@ -2202,7 +2408,10 @@ void CWeaponPhysCannon::CheckForTarget( void )
  	VectorMA( startPos, TraceLength(), aimDir, endPos );
  
  	trace_t	tr;
@@ -1988,7 +2019,7 @@ index 26fdfef..34bae82 100644
  
  	if ( ( tr.fraction != 1.0f ) && ( tr.m_pEnt != NULL ) )
  	{
-@@ -3342,3 +3545,93 @@ void CallbackPhyscannonImpact( const CEffectData &data )
+@@ -3342,3 +3551,93 @@ void CallbackPhyscannonImpact( const CEffectData &data )
  DECLARE_CLIENT_EFFECT( "PhyscannonImpact", CallbackPhyscannonImpact );
  
  #endif

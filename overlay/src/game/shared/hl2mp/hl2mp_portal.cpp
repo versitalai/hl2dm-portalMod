@@ -640,7 +640,10 @@ static bool TracePlayerHullLocalWorld( CHL2MPPortal *pPortal, const Vector &vecS
 	// A loose prop in front of the exit, where the part of the player that's
 	// through would be: push it out of the way, as walking into it would.
 	// (The player's physics shadow is on this side and can't reach it.)
-	if ( ( trBack.fraction < 1.0f || trBack.startsolid ) && trBack.m_pEnt && trBack.m_pEnt->GetMoveType() == MOVETYPE_VPHYSICS )
+	// Only while moving in: standing near the portal mustn't shove (or slow
+	// down) things flying past the exit.
+	bool bMovingIn = DotProduct( vecEnd - vecStart, pPortal->GetSurfaceNormal() ) < -0.01f;
+	if ( bMovingIn && ( trBack.fraction < 1.0f || trBack.startsolid ) && trBack.m_pEnt && trBack.m_pEnt->GetMoveType() == MOVETYPE_VPHYSICS )
 	{
 		IPhysicsObject *pPhys = trBack.m_pEnt->VPhysicsGetObject();
 		if ( pPhys && pPhys->IsMoveable() && !( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )

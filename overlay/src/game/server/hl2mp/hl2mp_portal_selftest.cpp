@@ -61,6 +61,8 @@ public:
 		m_nSmoothTeleportsBefore = 0;
 		m_flAttack2Until = 0.0f;
 		m_flUseUntil = 0.0f;
+		m_bPuntTrack = false;
+		m_flPuntMaxAlong = 0.0f;
 		m_bJitterTrack = m_bJitterPrev = false;
 		m_vecJitterPrev.Init();
 		m_flJitterMax = m_flJitterSum = 0.0f;
@@ -459,6 +461,12 @@ private:
 	void TrackJitter()
 	{
 		CBaseEntity *pBox = m_hGravBox;
+		if ( m_bPuntTrack && pBox && pBox->VPhysicsGetObject() )
+		{
+			Vector vecVelocity;
+			pBox->VPhysicsGetObject()->GetVelocity( &vecVelocity, NULL );
+			m_flPuntMaxAlong = MAX( m_flPuntMaxAlong, DotProduct( vecVelocity, m_vecThroughDir ) );
+		}
 		if ( !m_bJitterTrack || !pBox )
 			return;
 		Vector vecPos = pBox->WorldSpaceCenter();
@@ -1246,6 +1254,7 @@ private:
 			if ( pBox )
 				UTIL_Remove( pBox );
 			m_flJitterStart = -1.0f;
+			m_bJitterTrack = false;
 
 			// Grab a box seen through the wall portal (out of the floor one).
 			m_hGravBox = SetupThroughPortalBox( 58.0f, 48.0f );
@@ -1264,8 +1273,11 @@ private:
 			if ( pBox )
 				UTIL_Remove( pBox );
 
-			// Punt one: it should fly on out of the floor portal.
+			// Punt one: it should fly on out of the floor portal (peak speed:
+			// it can hit the ceiling and bounce back before the check).
 			m_hGravBox = SetupThroughPortalBox( 58.0f, 48.0f );
+			m_bPuntTrack = true;
+			m_flPuntMaxAlong = 0.0f;
 			m_flAttackUntil = gpGlobals->curtime + 0.2f;
 			Wait( 0.4f );
 			return;
@@ -1274,17 +1286,14 @@ private:
 		case 26:
 		{
 			CBaseEntity *pBox = m_hGravBox;
-			Vector vecVelocity( 0, 0, 0 );
-			if ( pBox && pBox->VPhysicsGetObject() )
-			{
-				pBox->VPhysicsGetObject()->GetVelocity( &vecVelocity, NULL );
-			}
-			float flAlong = DotProduct( vecVelocity, m_vecThroughDir );
-			Result( "gravgun_punt_through_portal", flAlong > 200.0f, "speed_along_view=%.0f", flAlong );
+			m_bPuntTrack = false;
+			Result( "gravgun_punt_through_portal", m_flPuntMaxAlong > 200.0f, "peak_speed_along_view=%.0f", m_flPuntMaxAlong );
 			if ( pBox )
 				UTIL_Remove( pBox );
 
-			// +use one within reach through the portal.
+			// +use one within reach through the portal (hand pickup is off in
+			// stock HL2DM: turn it on for this).
+			ConVarRef( "hl2mp_allow_pickup" ).SetValue( 1 );
 			m_hGravBox = SetupThroughPortalBox( 28.0f, 30.0f );
 			m_flUseUntil = gpGlobals->curtime + 0.1f;
 			Wait( 1.0f );
@@ -1296,6 +1305,7 @@ private:
 			CBaseEntity *pBox = m_hGravBox;
 			bool bHeld = IsPlayerHeld( pBox );
 			Result( "use_pickup_through_portal", bHeld, "held=%d box_teleports=%d", bHeld, pBox ? CHL2MPPortal::CountTeleports( pBox ) : -1 );
+			ConVarRef( "hl2mp_allow_pickup" ).SetValue( 0 );
 			m_hGravBox = NULL;
 			ToBasePlayer( m_hBot )->ForceDropOfCarriedPhysObjects( NULL );
 			if ( pBox )
@@ -1394,6 +1404,8 @@ private:
 	EHANDLE	m_hGravBox;
 	float	m_flAttack2Until, m_flUseUntil;
 	Vector	m_vecThroughDir;
+	bool	m_bPuntTrack;
+	float	m_flPuntMaxAlong;
 	bool	m_bJitterTrack, m_bJitterPrev;
 	Vector	m_vecJitterPrev;
 	float	m_flJitterMax, m_flJitterSum, m_flJitterStart;
