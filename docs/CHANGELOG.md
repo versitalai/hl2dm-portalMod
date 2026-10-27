@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.2 — Unreleased
+## 0.5.2 — 2026-10-27
 
 ### Fixed
 - **Stuck in a portal whose exit is blocked by a prop.** Loose physics props at the exit no longer block players: they
