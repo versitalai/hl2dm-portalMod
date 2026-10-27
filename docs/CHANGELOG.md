@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-10-27
 
 ### Changed
 - **Players collide with a real hole near portals.** Each portal builds a local collision world: the map around it with
