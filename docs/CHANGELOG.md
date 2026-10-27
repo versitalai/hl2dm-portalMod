@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.4 — Unreleased
+## 0.5.4 — 2026-10-27
 
 ### Fixed
 - **Prop's copy lagging behind as it slides through a portal.** The copy drawn coming out of the other portal was
