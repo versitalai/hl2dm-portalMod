@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.3 — Unreleased
+## 0.5.3 — 2026-10-27
 
 ### Fixed
 - **Gravity gun: held object slid nearer and farther while you turned.** The hold distance used the object's current
