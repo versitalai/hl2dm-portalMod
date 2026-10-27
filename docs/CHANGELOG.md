@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.5 — Unreleased
+## 0.5.5 — 2026-10-27
 
 ### Fixed
 - **Gravity gun: held object swinging near/far while turning.** The server aimed the hold with only the first of the
