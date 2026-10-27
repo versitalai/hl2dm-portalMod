@@ -1353,16 +1353,18 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	if ( !pEntity->IsPlayer() && pEntity->GetMoveType() != MOVETYPE_VPHYSICS && vVelocity.LengthSqr() < 1.0f )
 		return false;
 
-	// A held object only goes through when the spot it's held at is past the
+	// A held object only pops through when the spot it's held at is past the
 	// plane. Otherwise the hold pulls it back against the exit, it touches
-	// that portal and flips back, over and over.
+	// that portal and flips back, over and over. Held at the plane, it slides
+	// into the hole instead (smooth crossing, below): against the real wall
+	// it was shoved back and forth between the hold and the wall.
+	bool bHeldShort = false;
 	IPhysicsObject *pHeldPhys = pEntity->VPhysicsGetObject();
 	if ( pEntity->GetMoveType() == MOVETYPE_VPHYSICS && pHeldPhys && ( pHeldPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) )
 	{
 		Vector vecHeldTarget;
-		if ( PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
-			DotProduct( vForward, vecHeldTarget - GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST )
-			return false;
+		bHeldShort = PhysCannon_GetHeldObjectTarget( pEntity, &vecHeldTarget ) &&
+			DotProduct( vForward, vecHeldTarget - GetAbsOrigin() ) > -PORTAL_HELD_THROUGH_DIST;
 	}
 
 	bool bTouching = ( flGap <= PORTAL_TOUCH_DIST ) && ( flNormalSpeed <= 1.0f );
@@ -1378,7 +1380,9 @@ bool CHL2MPPortal::ShouldTeleport( CBaseEntity *pEntity )
 	}
 	vCross -= vForward * DotProduct( vForward, vCross - GetAbsOrigin() );
 
-	return IsPointInEllipse( vCross );
+	if ( !IsPointInEllipse( vCross ) )
+		return false;
+	return !bHeldShort || CanCrossSmoothly( pEntity );
 }
 
 bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity, bool bExact )
@@ -1656,18 +1660,16 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	if ( pEntity->VPhysicsGetObjectList( pList, ARRAYSIZE( pList ) ) != 1 || !pList[0]->IsMoveable() )
 		return false;
 
-	// Held objects go where the hold point goes and pop through when it does
-	// (the grab controller's portal stack expects that).
-	if ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD )
-		return false;
-
 	// Heading in (or lying on a floor portal, which gravity pulls it into).
 	// Something just resting against a wall portal pops through as before.
+	// Held objects go where the hold puts them: in, or resting at the plane.
+	// The handover (TeleportEntity) keeps the grab controller's portal stack.
 	Vector vForward = GetSurfaceNormal();
 	Vector vVelocity;
 	AngularImpulse angVelocity;
 	pList[0]->GetVelocity( &vVelocity, &angVelocity );
-	if ( DotProduct( vVelocity, vForward ) > -1.0f && vForward.z < 0.7f )
+	bool bHeld = ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) != 0;
+	if ( !bHeld && DotProduct( vVelocity, vForward ) > -1.0f && vForward.z < 0.7f )
 		return false;
 
 	// Its cross-section fits the hole, there's room for it out of the other

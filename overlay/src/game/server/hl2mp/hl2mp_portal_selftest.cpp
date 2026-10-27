@@ -466,6 +466,18 @@ private:
 		if ( m_bJitterPrev && nTeleports == m_nJitterTeleports )
 		{
 			float flMove = ( vecPos - m_vecJitterPrev ).Length();
+			if ( flMove > 2.0f && m_hWall && m_hFloor )
+			{
+				Vector vecTarget( 0, 0, 0 );
+				PhysCannon_GetHeldObjectTarget( pBox, &vecTarget );
+				Msg( "PORTALTEST info   jitter t=%.3f moved %.1f, box %.1f off wall %.1f off floor portal, target %.1f / %.1f, crossing=%d world_off=%d\n",
+					gpGlobals->curtime, flMove,
+					DotProduct( m_hWall->GetSurfaceNormal(), vecPos - m_hWall->GetAbsOrigin() ),
+					DotProduct( m_hFloor->GetSurfaceNormal(), vecPos - m_hFloor->GetAbsOrigin() ),
+					DotProduct( m_hWall->GetSurfaceNormal(), vecTarget - m_hWall->GetAbsOrigin() ),
+					DotProduct( m_hFloor->GetSurfaceNormal(), vecTarget - m_hFloor->GetAbsOrigin() ),
+					CHL2MPPortal::IsCrossing( pBox ), PhysEntityCollisionsAreDisabled( GetWorldEntity(), pBox ) );
+			}
 			m_flJitterMax = MAX( m_flJitterMax, flMove );
 			m_flJitterSum += flMove;
 			m_nJitterTicks++;

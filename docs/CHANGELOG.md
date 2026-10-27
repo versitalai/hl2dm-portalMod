@@ -7,6 +7,9 @@
   get pushed out of the way along the exit's normal. Frozen props still block (they can't move).
 - **Props snapping back and forth across a portal.** The smooth-crossing handover now needs the prop's center 1 unit
   past the plane (hysteresis) before swapping sides, so a prop resting on the plane no longer flips every tick.
+- **Held box twitching at a portal.** A box held right at a portal's plane (not yet through) was pushed against the
+  real wall around the hole by the hold, and shook. It now slides into the hole like a loose prop (smooth crossing)
+  and only goes across once the hold point does. Self-test: `gravgun_hold_through_portal_steady`.
 - Settings menu: the potato preset now runs, opens the menu and saves in one go; `portal_settings` opens the game UI
   first when it's closed.
 
