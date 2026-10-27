@@ -43,6 +43,19 @@ ConVar sv_portal_local_world( "sv_portal_local_world", "1", FCVAR_REPLICATED, "P
 
 #define PORTAL_WORLD_BRUSH_CONTENTS	( CONTENTS_SOLID | CONTENTS_WINDOW | CONTENTS_GRATE | CONTENTS_PLAYERCLIP | CONTENTS_MONSTERCLIP )
 
+// Which side of the portal's plane a collide counts on. Brush pieces are cut
+// exactly (the hole, and the other side's copy clipped at the plane). Static
+// props and displacements can't be cut: one that reaches through the plane
+// (a prop pushed into the wall, terrain dipping under the floor next to the
+// other portal) would otherwise stick out on the wrong side, an invisible
+// wall at the hole. Those only collide with the part of a hull on their side.
+enum
+{
+	PORTAL_WORLD_SIDE_BOTH = 0,
+	PORTAL_WORLD_SIDE_FRONT,	// this side's uncut geometry
+	PORTAL_WORLD_SIDE_BACK,		// the other side's uncut geometry, behind this plane
+};
+
 struct PortalWorldCollide_t
 {
 	CPhysCollide	*pCollide;
@@ -50,6 +63,17 @@ struct PortalWorldCollide_t
 	int				iContents;
 	Vector			vecOrigin;
 	QAngle			angAngles;
+	int				iSide;
+	bool			bPropSafe;	// doesn't reach to where it doesn't belong: props can collide with it whole
+};
+
+// Piece outlines for sv_portal_world_draw.
+struct PortalWorldBox_t
+{
+	Vector	vecMins, vecMaxs;
+	int		iSide;
+	bool	bRemote;
+	bool	bPropSafe;
 };
 
 #ifdef GAME_DLL
@@ -60,7 +84,7 @@ static void DestroyColliderObjects( CHL2MPPortalWorld *pWorld );
 class CHL2MPPortalWorld
 {
 public:
-	CHL2MPPortalWorld() : m_nVersion( 0 ), m_nLinkedVersion( 0 ), m_nLocalPieces( 0 ), m_nRemotePieces( 0 ), m_nStaticProps( 0 ), m_nDisplacements( 0 ), m_nChecksum( 0 ) {}
+	CHL2MPPortalWorld() : m_nVersion( 0 ), m_nLinkedVersion( 0 ), m_nLocalPieces( 0 ), m_nRemotePieces( 0 ), m_nStaticProps( 0 ), m_nDisplacements( 0 ), m_nChecksum( 0 ), m_bPropsCanCross( true ), m_nPropUnsafe( 0 ) {}
 	~CHL2MPPortalWorld() { Clear(); }
 
 	void Clear()
@@ -77,15 +101,23 @@ public:
 			}
 		}
 		m_Collides.RemoveAll();
+		m_Boxes.RemoveAll();
 		m_nLocalPieces = m_nRemotePieces = m_nStaticProps = m_nDisplacements = 0;
 		m_nChecksum = 0;
+		m_bPropsCanCross = true;
+		m_nPropUnsafe = 0;
 	}
 
 	int		m_nVersion, m_nLinkedVersion;	// frame versions it was built for
 	Vector	m_vecOrigin, m_vecForward, m_vecRight, m_vecUp;
 	CUtlVector<PortalWorldCollide_t> m_Collides;
+	CUtlVector<PortalWorldBox_t> m_Boxes;
 	int		m_nLocalPieces, m_nRemotePieces, m_nStaticProps, m_nDisplacements;
 	unsigned int m_nChecksum;
+	// Every uncut collide is prop-safe: the prop collider has the whole world,
+	// so props can slide through (otherwise they pop through as before).
+	bool	m_bPropsCanCross;
+	int		m_nPropUnsafe;		// how many uncut collides stop that
 #ifdef GAME_DLL
 	CHandle<CHL2MPPortalCollider> m_hCollider;
 #endif
@@ -149,14 +181,23 @@ struct PortalWorldGroup_t
 	CUtlVector<CPhysConvex *> convexes;
 };
 
-static void AddConvex( CUtlVector<PortalWorldGroup_t> &groups, int iContents, CUtlVector<Vector> &verts, unsigned int &nHash )
+static void AddConvex( CHL2MPPortalWorld *pWorld, CUtlVector<PortalWorldGroup_t> &groups, int iContents, CUtlVector<Vector> &verts, bool bRemote, unsigned int &nHash )
 {
 	CUtlVector<Vector *> pointers;
+	PortalWorldBox_t box;
+	box.vecMins.Init( FLT_MAX, FLT_MAX, FLT_MAX );
+	box.vecMaxs.Init( -FLT_MAX, -FLT_MAX, -FLT_MAX );
+	box.iSide = PORTAL_WORLD_SIDE_BOTH;
+	box.bRemote = bRemote;
+	box.bPropSafe = true;
 	FOR_EACH_VEC( verts, i )
 	{
 		pointers.AddToTail( &verts[i] );
 		HashVector( nHash, verts[i] );
+		VectorMin( box.vecMins, verts[i], box.vecMins );
+		VectorMax( box.vecMaxs, verts[i], box.vecMaxs );
 	}
+	pWorld->m_Boxes.AddToTail( box );
 	CPhysConvex *pConvex = physcollision->ConvexFromVerts( pointers.Base(), pointers.Count() );
 	if ( !pConvex )
 		return;
@@ -177,6 +218,8 @@ static void AddConvex( CUtlVector<PortalWorldGroup_t> &groups, int iContents, CU
 	}
 	groups[iGroup].convexes.AddToTail( pConvex );
 }
+
+static void AddUncutCollide( CHL2MPPortalWorld *pWorld, PortalWorldCollide_t &collide );
 
 static void AddStaticProps( CHL2MPPortalWorld *pWorld, const Vector &vMins, const Vector &vMaxs, const VMatrix *pTransform, unsigned int &nHash )
 {
@@ -202,6 +245,7 @@ static void AddStaticProps( CHL2MPPortalWorld *pWorld, const Vector &vMins, cons
 		collide.iContents = CONTENTS_SOLID;
 		collide.vecOrigin = vecOrigin;
 		collide.angAngles = angAngles;
+		collide.iSide = pTransform ? PORTAL_WORLD_SIDE_BACK : PORTAL_WORLD_SIDE_FRONT;
 
 		if ( pProp->GetSolid() == SOLID_VPHYSICS )
 		{
@@ -212,7 +256,7 @@ static void AddStaticProps( CHL2MPPortalWorld *pWorld, const Vector &vMins, cons
 			{
 				collide.pCollide = pVCollide->solids[iSolid];
 				collide.bOwned = false;
-				pWorld->m_Collides.AddToTail( collide );
+				AddUncutCollide( pWorld, collide );
 			}
 		}
 		else
@@ -221,11 +265,74 @@ static void AddStaticProps( CHL2MPPortalWorld *pWorld, const Vector &vMins, cons
 			collide.bOwned = true;
 			if ( !collide.pCollide )
 				continue;
-			pWorld->m_Collides.AddToTail( collide );
+			AddUncutCollide( pWorld, collide );
 		}
 		pWorld->m_nStaticProps++;
 		HashVector( nHash, vecOrigin );
 	}
+}
+
+// A static prop or displacement set (can't be cut). Traces only let it touch
+// the part of a hull on its own side of the plane; the prop collider (whole
+// shapes, no such clipping) only gets it if it stays where it belongs: this
+// side's out of the hole (behind the plane, inside its outline), the other
+// side's behind the plane.
+static void AddUncutCollide( CHL2MPPortalWorld *pWorld, PortalWorldCollide_t &collide )
+{
+	PortalWorldBox_t box;
+	physcollision->CollideGetAABB( &box.vecMins, &box.vecMaxs, collide.pCollide, collide.vecOrigin, collide.angAngles );
+
+	// Only the server's prop collider uses this.
+	collide.bPropSafe = true;
+#ifdef GAME_DLL
+	// Where it mustn't be, as a box in the portal's frame: this side's, the
+	// hole behind the plane; the other side's, in front of the plane where a
+	// prop crossing the hole can be (the hole plus a margin; a couple of units
+	// of slack in front: terrain meeting the other portal's floor). Its actual
+	// shape is tested (a displacement set's bounds cover the whole region),
+	// placed in the portal's frame (floor portals are turned to the shooter's
+	// view, so the frame isn't the world's).
+	const float flCrossMargin = 16.0f;
+	Vector vBoxCenter, vBoxHalf;
+	if ( collide.iSide == PORTAL_WORLD_SIDE_BACK )
+	{
+		vBoxCenter.Init( ( 2.0f + PORTAL_WORLD_DEPTH ) * 0.5f, 0, 0 );
+		vBoxHalf.Init( ( PORTAL_WORLD_DEPTH - 2.0f ) * 0.5f, HL2MP_PORTAL_HALF_WIDTH + flCrossMargin, HL2MP_PORTAL_HALF_HEIGHT + flCrossMargin );
+	}
+	else
+	{
+		float flFront = PORTAL_WORLD_HOLE_FRONT - 2.0f;
+		vBoxCenter.Init( ( flFront - PORTAL_WORLD_DEPTH ) * 0.5f, 0, 0 );
+		vBoxHalf.Init( ( flFront + PORTAL_WORLD_DEPTH ) * 0.5f, HL2MP_PORTAL_HALF_WIDTH + PORTAL_WORLD_HOLE_SLACK, HL2MP_PORTAL_HALF_HEIGHT + PORTAL_WORLD_HOLE_SLACK );
+	}
+
+	// Portal frame: x forward, y left, z up.
+	matrix3x4_t matPortalToWorld, matWorldToPortal, matCollide, matLocal;
+	matPortalToWorld.Init( pWorld->m_vecForward, -pWorld->m_vecRight, pWorld->m_vecUp, pWorld->m_vecOrigin );
+	MatrixInvert( matPortalToWorld, matWorldToPortal );
+	AngleMatrix( collide.angAngles, collide.vecOrigin, matCollide );
+	ConcatTransforms( matWorldToPortal, matCollide, matLocal );
+	Vector vLocalOrigin;
+	QAngle angLocal;
+	MatrixAngles( matLocal, angLocal, vLocalOrigin );
+
+	Ray_t ray;
+	ray.Init( vBoxCenter, vBoxCenter, -vBoxHalf, vBoxHalf );
+	trace_t tr;
+	physcollision->TraceBox( ray, collide.pCollide, vLocalOrigin, angLocal, &tr );
+	collide.bPropSafe = !tr.startsolid;
+#endif
+	if ( !collide.bPropSafe )
+	{
+		pWorld->m_bPropsCanCross = false;
+		pWorld->m_nPropUnsafe++;
+	}
+	pWorld->m_Collides.AddToTail( collide );
+
+	box.iSide = collide.iSide;
+	box.bRemote = ( collide.iSide == PORTAL_WORLD_SIDE_BACK );
+	box.bPropSafe = collide.bPropSafe;
+	pWorld->m_Boxes.AddToTail( box );
 }
 
 static void BuildPortalWorld( const CHL2MPPortal *pPortal, CHL2MPPortalWorld *pWorld )
@@ -285,7 +392,7 @@ static void BuildPortalWorld( const CHL2MPPortal *pPortal, CHL2MPPortalWorld *pW
 		{
 			if ( !PortalCarve_IsSolid( pieces[p], &verts ) )
 				continue;
-			AddConvex( groups, iContents, verts, nHash );
+			AddConvex( pWorld, groups, iContents, verts, false, nHash );
 			pWorld->m_nLocalPieces++;
 		}
 	}
@@ -314,7 +421,7 @@ static void BuildPortalWorld( const CHL2MPPortal *pPortal, CHL2MPPortalWorld *pW
 		{
 			verts[v] = matLinkedToThis.VMul4x3( verts[v] );
 		}
-		AddConvex( groups, iContents, verts, nHash );
+		AddConvex( pWorld, groups, iContents, verts, true, nHash );
 		pWorld->m_nRemotePieces++;
 	}
 
@@ -326,6 +433,8 @@ static void BuildPortalWorld( const CHL2MPPortal *pPortal, CHL2MPPortalWorld *pW
 		collide.iContents = groups[i].iContents;
 		collide.vecOrigin = vec3_origin;
 		collide.angAngles = vec3_angle;
+		collide.iSide = PORTAL_WORLD_SIDE_BOTH;
+		collide.bPropSafe = true;
 		if ( collide.pCollide )
 		{
 			pWorld->m_Collides.AddToTail( collide );
@@ -338,8 +447,14 @@ static void BuildPortalWorld( const CHL2MPPortal *pPortal, CHL2MPPortalWorld *pW
 	CPhysCollide *pDisp = enginetrace->GetCollidableFromDisplacementsInAABB( vMins, vMaxs );
 	if ( pDisp )
 	{
-		PortalWorldCollide_t collide = { pDisp, true, CONTENTS_SOLID, vec3_origin, vec3_angle };
-		pWorld->m_Collides.AddToTail( collide );
+		PortalWorldCollide_t collide;
+		collide.pCollide = pDisp;
+		collide.bOwned = true;
+		collide.iContents = CONTENTS_SOLID;
+		collide.vecOrigin = vec3_origin;
+		collide.angAngles = vec3_angle;
+		collide.iSide = PORTAL_WORLD_SIDE_FRONT;
+		AddUncutCollide( pWorld, collide );
 		pWorld->m_nDisplacements++;
 	}
 
@@ -353,7 +468,8 @@ static void BuildPortalWorld( const CHL2MPPortal *pPortal, CHL2MPPortalWorld *pW
 		collide.bOwned = true;
 		collide.iContents = CONTENTS_SOLID;
 		MatrixAngles( matLinkedToThis.As3x4(), collide.angAngles, collide.vecOrigin );
-		pWorld->m_Collides.AddToTail( collide );
+		collide.iSide = PORTAL_WORLD_SIDE_BACK;
+		AddUncutCollide( pWorld, collide );
 		pWorld->m_nDisplacements++;
 	}
 
@@ -408,6 +524,75 @@ bool HL2MPPortalWorld_Contains( const CHL2MPPortal *pPortal, const Vector &vecCe
 	return true;
 }
 
+// Trace a collide that only counts on one side of the plane (see
+// PORTAL_WORLD_SIDE_*) with the part of the swept box on that side. The
+// portal's normal is along world axis k. Clipping the box for a whole sweep
+// that crosses the plane would cut away most of it, so the sweep goes in
+// steps of at most PORTAL_WORLD_SIDE_STEP along the normal, each clipped for
+// itself. Returns the fraction of the whole sweep it hit at (1 = no hit).
+#define PORTAL_WORLD_SIDE_STEP		4.0f
+#define PORTAL_WORLD_SIDE_EPSILON	0.1f
+
+static float TraceSideCollide( const CHL2MPPortalWorld *pWorld, const PortalWorldCollide_t &collide, const Ray_t &ray, int k, float flSign,
+	bool *pStartSolid, cplane_t *pPlane )
+{
+	float flStartDist = flSign * ( ray.m_Start[k] - pWorld->m_vecOrigin[k] );
+	float flMove = flSign * ray.m_Delta[k];
+	float flExtent = ray.m_Extents[k];
+	int nSteps = clamp( (int)ceil( fabs( flMove ) / PORTAL_WORLD_SIDE_STEP ), 1, 64 );
+	bool bFront = ( collide.iSide == PORTAL_WORLD_SIDE_FRONT );
+
+	for ( int iStep = 0; iStep < nSteps; iStep++ )
+	{
+		float t0 = (float)iStep / nSteps;
+		float t1 = (float)( iStep + 1 ) / nSteps;
+		float flDist0 = flStartDist + flMove * t0;
+		float flDist1 = flStartDist + flMove * t1;
+
+		Ray_t step = ray;
+		step.m_Start = ray.m_Start + ray.m_Delta * t0;
+		step.m_Delta = ray.m_Delta * ( t1 - t0 );
+		if ( flExtent < 0.001f )
+		{
+			// A point: the step counts whole if it stays on that side.
+			if ( bFront ? MIN( flDist0, flDist1 ) < PORTAL_WORLD_SIDE_EPSILON : MAX( flDist0, flDist1 ) > -PORTAL_WORLD_SIDE_EPSILON )
+				continue;
+		}
+		else
+		{
+			// Along the normal, relative to the box center: [flLo, flHi].
+			float flLo = -flExtent, flHi = flExtent;
+			if ( bFront )
+				flLo = MAX( flLo, PORTAL_WORLD_SIDE_EPSILON - MIN( flDist0, flDist1 ) );
+			else
+				flHi = MIN( flHi, -PORTAL_WORLD_SIDE_EPSILON - MAX( flDist0, flDist1 ) );
+			if ( flLo >= flHi )
+				continue;
+			step.m_Start[k] += flSign * ( flLo + flHi ) * 0.5f;
+			step.m_Extents[k] = ( flHi - flLo ) * 0.5f;
+			step.m_IsRay = false;
+		}
+		step.m_IsSwept = step.m_Delta.LengthSqr() != 0.0f;
+
+		trace_t tr;
+		physcollision->TraceBox( step, collide.pCollide, collide.vecOrigin, collide.angAngles, &tr );
+		if ( tr.startsolid )
+		{
+			// Overlapping it where this step starts: stuck from the start for
+			// the first step, a hit at the step's start after that.
+			*pStartSolid = ( iStep == 0 );
+			*pPlane = tr.plane;
+			return t0;
+		}
+		if ( tr.fraction < 1.0f )
+		{
+			*pPlane = tr.plane;
+			return t0 + tr.fraction * ( t1 - t0 );
+		}
+	}
+	return 1.0f;
+}
+
 bool HL2MPPortalWorld_Trace( const CHL2MPPortal *pPortal, const Ray_t &ray, unsigned int mask, trace_t *pTrace )
 {
 	CHL2MPPortalWorld *pWorld = GetPortalWorld( pPortal );
@@ -418,26 +603,48 @@ bool HL2MPPortalWorld_Trace( const CHL2MPPortal *pPortal, const Ray_t &ray, unsi
 	pTrace->fraction = 1.0f;
 	pTrace->fractionleftsolid = 0.0f;
 
+	int k;
+	float flSign, flDist;
+	if ( !pPortal->GetPlaneAxis( &k, &flSign, &flDist ) )
+		return false;
+
 	FOR_EACH_VEC( pWorld->m_Collides, i )
 	{
 		const PortalWorldCollide_t &collide = pWorld->m_Collides[i];
 		if ( !( collide.iContents & mask ) )
 			continue;
 
-		trace_t tr;
-		physcollision->TraceBox( ray, collide.pCollide, collide.vecOrigin, collide.angAngles, &tr );
-		if ( tr.startsolid )
+		bool bStartSolid = false;
+		float flFraction;
+		cplane_t plane;
+		if ( collide.iSide == PORTAL_WORLD_SIDE_BOTH )
+		{
+			trace_t tr;
+			physcollision->TraceBox( ray, collide.pCollide, collide.vecOrigin, collide.angAngles, &tr );
+			bStartSolid = tr.startsolid;
+			flFraction = tr.startsolid ? 0.0f : tr.fraction;
+			plane = tr.plane;
+			if ( tr.allsolid )
+			{
+				pTrace->allsolid = true;
+			}
+		}
+		else
+		{
+			flFraction = TraceSideCollide( pWorld, collide, ray, k, flSign, &bStartSolid, &plane );
+		}
+
+		if ( bStartSolid )
 		{
 			pTrace->startsolid = true;
-			pTrace->allsolid = pTrace->allsolid || tr.allsolid;
 			pTrace->fraction = 0.0f;
-			pTrace->plane = tr.plane;
+			pTrace->plane = plane;
 			pTrace->contents = collide.iContents;
 		}
-		else if ( !pTrace->startsolid && tr.fraction < pTrace->fraction )
+		else if ( !pTrace->startsolid && flFraction < pTrace->fraction )
 		{
-			pTrace->fraction = tr.fraction;
-			pTrace->plane = tr.plane;
+			pTrace->fraction = flFraction;
+			pTrace->plane = plane;
 			pTrace->contents = collide.iContents;
 		}
 	}
@@ -454,6 +661,16 @@ bool HL2MPPortalWorld_Trace( const CHL2MPPortal *pPortal, const Ray_t &ray, unsi
 		pTrace->surface.name = "**studio**";
 	}
 	return true;
+}
+
+bool HL2MPPortalWorld_PropsCanCross( const CHL2MPPortal *pPortal, int *pUnsafe )
+{
+	CHL2MPPortalWorld *pWorld = GetPortalWorld( pPortal );
+	if ( pUnsafe )
+	{
+		*pUnsafe = pWorld ? pWorld->m_nPropUnsafe : 0;
+	}
+	return pWorld && pWorld->m_bPropsCanCross;
 }
 
 bool HL2MPPortalWorld_GetInfo( const CHL2MPPortal *pPortal, int *pLocalPieces, int *pRemotePieces, int *pStaticProps, int *pDisplacements, unsigned int *pChecksum )
@@ -483,8 +700,17 @@ static void PrintPortalWorlds( const CCommand &args )
 			Msg( "portal %d (%s): no local world\n", pPortal->entindex(), pPortal->GetPortalType() == HL2MP_PORTAL_BLUE ? "blue" : "orange" );
 			continue;
 		}
+		int nUnsafe = 0;
+		bool bPropsSlide = HL2MPPortalWorld_PropsCanCross( pPortal, &nUnsafe );
 		Msg( "portal %d (%s): %d pieces here, %d from the other side, %d static props, %d displacement sets, checksum %08x\n",
 			pPortal->entindex(), pPortal->GetPortalType() == HL2MP_PORTAL_BLUE ? "blue" : "orange", nLocal, nRemote, nProps, nDisp, nChecksum );
+#ifdef GAME_DLL
+		Msg( "  props %s\n", bPropsSlide ? "slide through" : "pop through" );
+		if ( nUnsafe )
+		{
+			Msg( "  %d uncut prop/terrain pieces would be in the way of a sliding prop\n", nUnsafe );
+		}
+#endif
 	}
 }
 
@@ -551,7 +777,7 @@ public:
 		FOR_EACH_VEC( pWorld->m_Collides, i )
 		{
 			const PortalWorldCollide_t &collide = pWorld->m_Collides[i];
-			if ( !( collide.iContents & PORTAL_WORLD_PROP_CONTENTS ) )
+			if ( !( collide.iContents & PORTAL_WORLD_PROP_CONTENTS ) || !collide.bPropSafe )
 				continue;
 			IPhysicsObject *pObject = physenv->CreatePolyObjectStatic( collide.pCollide, iSurface, collide.vecOrigin, collide.angAngles, &params );
 			if ( pObject )
@@ -577,6 +803,52 @@ static void DestroyColliderObjects( CHL2MPPortalWorld *pWorld )
 	}
 }
 
+// Outline every piece of each portal's local world (listen server): this
+// side's brush pieces green, the other side's blue, uncut static props and
+// displacements yellow (red when props can't use them whole).
+static ConVar sv_portal_world_draw( "sv_portal_world_draw", "0", FCVAR_CHEAT, "Draw the outline of every piece of each portal's local collision world." );
+
+class CHL2MPPortalWorldDraw : public CAutoGameSystemPerFrame
+{
+public:
+	CHL2MPPortalWorldDraw() : CAutoGameSystemPerFrame( "CHL2MPPortalWorldDraw" ), m_flNextDraw( 0.0f ) {}
+
+	virtual void FrameUpdatePostEntityThink()
+	{
+		if ( !sv_portal_world_draw.GetBool() )
+			return;
+		// curtime starts over on a new map.
+		if ( gpGlobals->curtime < m_flNextDraw && m_flNextDraw - gpGlobals->curtime < 1.0f )
+			return;
+		const float flInterval = 0.25f;
+		m_flNextDraw = gpGlobals->curtime + flInterval;
+		for ( int i = 0; i < CHL2MPPortal::GetPortalCount(); i++ )
+		{
+			CHL2MPPortalWorld *pWorld = GetPortalWorld( CHL2MPPortal::GetPortal( i ) );
+			if ( !pWorld )
+				continue;
+			FOR_EACH_VEC( pWorld->m_Boxes, b )
+			{
+				const PortalWorldBox_t &box = pWorld->m_Boxes[b];
+				int r = 0, g = 200, bl = 0;
+				if ( box.iSide != PORTAL_WORLD_SIDE_BOTH )
+				{
+					r = 255; g = box.bPropSafe ? 200 : 0;
+				}
+				else if ( box.bRemote )
+				{
+					g = 120; bl = 255;
+				}
+				NDebugOverlay::Box( vec3_origin, box.vecMins, box.vecMaxs, r, g, bl, 0, flInterval + 0.05f );
+			}
+		}
+	}
+
+private:
+	float m_flNextDraw;
+};
+static CHL2MPPortalWorldDraw g_HL2MPPortalWorldDraw;
+
 int HL2MPPortalWorld_SyncCollider( CHL2MPPortal *pPortal )
 {
 	CHL2MPPortalWorld *pWorld = GetPortalWorld( pPortal );
@@ -599,6 +871,11 @@ int HL2MPPortalWorld_SyncCollider( CHL2MPPortal *pPortal )
 	{
 		pCollider->Build( pWorld );
 	}
+	// Uncut props / terrain in the way: the collider is missing them, so
+	// nothing may cross with it (a crossing in progress when a portal was
+	// re-placed ends here too, instead of losing the floor).
+	if ( !pWorld->m_bPropsCanCross )
+		return 0;
 	return pCollider->m_Objects.Count();
 }
 

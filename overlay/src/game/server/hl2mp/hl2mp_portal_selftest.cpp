@@ -333,10 +333,33 @@ private:
 		bool bAir = !LocalWorldSolidAt( m_hFloor, vecAirThere );
 		Result( "local_world_other_side", bFloor && bAir, "floor_copied=%d air_copied=%d", bFloor, bAir );
 
+		// Bug report: an invisible wall at the portal. Static props and
+		// displacements can't be cut; ones reaching through the plane at the
+		// other portal must not stick out in front of this one. The space in
+		// front of each hole must be clear.
+		bool bClear = true;
+		for ( int i = 0; i < 2; i++ )
+		{
+			Vector vecHoleForward = pPortals[i]->GetSurfaceNormal();
+			for ( float flOut = 4.0f; flOut <= 32.0f && bClear; flOut += 14.0f )
+			{
+				if ( LocalWorldSolidAt( pPortals[i], pPortals[i]->GetAbsOrigin() + vecHoleForward * flOut ) )
+				{
+					Msg( "PORTALTEST info %s portal: local world solid %.0f in front of the hole\n", i ? "floor" : "wall", flOut );
+					bClear = false;
+				}
+			}
+		}
+		Result( "local_world_front_clear", bClear );
+
 		// The same worlds as static physics objects, for props crossing through.
 		int nWallObjects = HL2MPPortalWorld_SyncCollider( m_hWall );
 		int nFloorObjects = HL2MPPortalWorld_SyncCollider( m_hFloor );
-		Result( "prop_collider_built", nWallObjects > 0 && nFloorObjects > 0, "wall_objects=%d floor_objects=%d", nWallObjects, nFloorObjects );
+		int nWallUnsafe = 0, nFloorUnsafe = 0;
+		bool bWallProps = HL2MPPortalWorld_PropsCanCross( m_hWall, &nWallUnsafe );
+		bool bFloorProps = HL2MPPortalWorld_PropsCanCross( m_hFloor, &nFloorUnsafe );
+		Result( "prop_collider_built", nWallObjects > 0 && nFloorObjects > 0 && bWallProps && bFloorProps,
+			"wall_objects=%d floor_objects=%d props_slide=%d/%d uncut_in_the_way=%d/%d", nWallObjects, nFloorObjects, bWallProps, bFloorProps, nWallUnsafe, nFloorUnsafe );
 	}
 
 	// What a physics object is touching (entity class, contact point), and

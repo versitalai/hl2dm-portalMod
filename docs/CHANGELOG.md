@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.1 — 2026-10-27
+
+### Fixed
+- **Invisible wall at some portals (players and props).** The local collision world copies static props and
+  displacements (terrain) whole: they can't be cut like brushes. One reaching through the plane at the other portal (a
+  prop pushed into the wall, terrain dipping under the floor next to it) stuck out in front of this portal, right
+  across the hole; this side's terrain or props reaching into the hole weren't cut out either. They now only collide
+  with the part of a hull on their own side of the plane. Props can't be clipped like that (physics uses whole
+  shapes), so where any such piece would be in the way, props pop through instead of sliding. Self-test:
+  `local_world_front_clear`.
+- From a review of the local-world code:
+  - A fast move through the plane (falling into a floor portal) clipped most of the hull away for those one-sided
+    props and terrain, so the player could end up inside them: the sweep is now traced in steps of at most 4 units.
+  - Re-placing a portal while a prop slid through it could leave the prop without the terrain it was resting on
+    (and fall out of the map); the slide now ends safely.
+  - Floor portals turned by the shooter's view checked too big an area (props popped through needlessly), and the
+    other side's props far from the hole stopped props sliding; both now check only where a crossing prop can be.
+  - `sv_portal_world_draw` kept working after a map change; `sv_portal_world_info` says whether props slide.
+
+### Added
+- `sv_portal_world_draw 1` (cheat, listen server) outlines every piece of each portal's local world: this side's brush
+  pieces green, the other side's blue, uncut props and terrain yellow (red where props can't use them).
+
 ## 0.5.0 — 2026-10-27
 
 ### Changed
