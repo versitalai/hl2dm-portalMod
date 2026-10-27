@@ -60,6 +60,7 @@ public:
 		m_nSnapsBefore = m_nBoxTeleportsBefore = 0;
 		m_nSmoothTeleportsBefore = 0;
 		m_flAttack2Until = 0.0f;
+		m_flUseUntil = 0.0f;
 		m_bJitterTrack = m_bJitterPrev = false;
 		m_vecJitterPrev.Init();
 		m_flJitterMax = m_flJitterSum = 0.0f;
@@ -409,6 +410,40 @@ private:
 		return pBox;
 	}
 
+	// Stand flDist in front of the wall portal looking into it, and float a
+	// box (no gravity) flBoxDist out of the floor portal along that view.
+	CBaseEntity *SetupThroughPortalBox( float flDist, float flBoxDist )
+	{
+		CBasePlayer *pBot = ToBasePlayer( m_hBot );
+		PlaceBot( FloorBelow( m_hWall->GetAbsOrigin() + m_vecWallNormal * flDist ), m_angBot, vec3_origin );
+		Vector vecEye = pBot->GetAbsOrigin() + pBot->GetViewOffset();
+		Vector vecDir = m_hWall->GetAbsOrigin() - vecEye;
+		VectorNormalize( vecDir );
+		QAngle angAim;
+		VectorAngles( vecDir, angAim );
+		m_angBot = angAim;
+		pBot->SnapEyeAngles( angAim );
+
+		m_vecThroughDir = m_hWall->MatrixThisToLinked().VMul3x3( vecDir );
+		CBaseEntity *pBox = CreateEntityByName( "prop_physics" );
+		pBox->SetAbsOrigin( m_hFloor->GetAbsOrigin() + m_vecThroughDir * flBoxDist );
+		pBox->KeyValue( "model", "models/props_junk/cardboard_box001a.mdl" );
+		pBox->Precache();
+		DispatchSpawn( pBox );
+		pBox->Activate();
+		if ( pBox->VPhysicsGetObject() )
+		{
+			pBox->VPhysicsGetObject()->EnableGravity( false );
+		}
+		return pBox;
+	}
+
+	bool IsPlayerHeld( CBaseEntity *pEntity )
+	{
+		IPhysicsObject *pPhys = pEntity ? pEntity->VPhysicsGetObject() : NULL;
+		return pPhys && ( pPhys->GetGameFlags() & FVPHYSICS_PLAYER_HELD );
+	}
+
 	void StartJitterTrack()
 	{
 		m_bJitterTrack = true;
@@ -457,6 +492,8 @@ private:
 			cmd.buttons |= IN_ATTACK;
 		if ( gpGlobals->curtime < m_flAttack2Until )
 			cmd.buttons |= IN_ATTACK2;
+		if ( gpGlobals->curtime < m_flUseUntil )
+			cmd.buttons |= IN_USE;
 		pBot->ProcessUsercmds( &cmd, 1, 1, 0, false );
 
 		Vector vecCenter = pBot->WorldSpaceCenter();
@@ -1198,6 +1235,60 @@ private:
 				UTIL_Remove( pBox );
 			m_flJitterStart = -1.0f;
 
+			// Grab a box seen through the wall portal (out of the floor one).
+			m_hGravBox = SetupThroughPortalBox( 58.0f, 48.0f );
+			m_flAttack2Until = gpGlobals->curtime + 0.3f;
+			Wait( 1.5f );
+			return;
+		}
+
+		case 25:
+		{
+			CBaseEntity *pBox = m_hGravBox;
+			Vector vecTarget;
+			bool bHeld = pBox && PhysCannon_GetHeldObjectTarget( pBox, &vecTarget );
+			Result( "gravgun_pickup_through_portal", bHeld, "held=%d box_teleports=%d", bHeld, pBox ? CHL2MPPortal::CountTeleports( pBox ) : -1 );
+			ToBasePlayer( m_hBot )->ForceDropOfCarriedPhysObjects( NULL );
+			if ( pBox )
+				UTIL_Remove( pBox );
+
+			// Punt one: it should fly on out of the floor portal.
+			m_hGravBox = SetupThroughPortalBox( 58.0f, 48.0f );
+			m_flAttackUntil = gpGlobals->curtime + 0.2f;
+			Wait( 0.4f );
+			return;
+		}
+
+		case 26:
+		{
+			CBaseEntity *pBox = m_hGravBox;
+			Vector vecVelocity( 0, 0, 0 );
+			if ( pBox && pBox->VPhysicsGetObject() )
+			{
+				pBox->VPhysicsGetObject()->GetVelocity( &vecVelocity, NULL );
+			}
+			float flAlong = DotProduct( vecVelocity, m_vecThroughDir );
+			Result( "gravgun_punt_through_portal", flAlong > 200.0f, "speed_along_view=%.0f", flAlong );
+			if ( pBox )
+				UTIL_Remove( pBox );
+
+			// +use one within reach through the portal.
+			m_hGravBox = SetupThroughPortalBox( 28.0f, 30.0f );
+			m_flUseUntil = gpGlobals->curtime + 0.1f;
+			Wait( 1.0f );
+			return;
+		}
+
+		case 27:
+		{
+			CBaseEntity *pBox = m_hGravBox;
+			bool bHeld = IsPlayerHeld( pBox );
+			Result( "use_pickup_through_portal", bHeld, "held=%d box_teleports=%d", bHeld, pBox ? CHL2MPPortal::CountTeleports( pBox ) : -1 );
+			m_hGravBox = NULL;
+			ToBasePlayer( m_hBot )->ForceDropOfCarriedPhysObjects( NULL );
+			if ( pBox )
+				UTIL_Remove( pBox );
+
 			// Bug report: two floor portals: you go higher and higher. Move the
 			// wall portal onto the floor nearby and drop the bot into one.
 			Vector vecRight, vecUp;
@@ -1235,7 +1326,7 @@ private:
 			return;
 		}
 
-		case 25:
+		case 28:
 		{
 			m_flLoopStart = -1.0f;
 			ConVarRef( "sv_portal_debug_moves" ).SetValue( 0 );
@@ -1289,7 +1380,8 @@ private:
 	EHANDLE	m_hBlocker;
 	EHANDLE	m_hSmoothBox;
 	EHANDLE	m_hGravBox;
-	float	m_flAttack2Until;
+	float	m_flAttack2Until, m_flUseUntil;
+	Vector	m_vecThroughDir;
 	bool	m_bJitterTrack, m_bJitterPrev;
 	Vector	m_vecJitterPrev;
 	float	m_flJitterMax, m_flJitterSum, m_flJitterStart;

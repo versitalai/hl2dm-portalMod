@@ -897,13 +897,69 @@ CHL2MPPortal *UTIL_HL2MPPortal_FindBlockedEntry( const Vector &vecOrigin, const 
 	return NULL;
 }
 
+#ifdef GAME_DLL
+static struct
+{
+	EHANDLE					hUser;
+	EHANDLE					hUsed;
+	CHandle<CHL2MPPortal>	hPortals[HL2MP_PORTAL_MAX_RECURSION];
+	int						nPortals;
+	int						nTick;
+} s_UsePortals;
+
+void HL2MPPortal_SetUsePortals( CBaseEntity *pUser, CBaseEntity *pUsed, const CUtlVector<CHL2MPPortal *> &portals )
+{
+	s_UsePortals.hUser = pUser;
+	s_UsePortals.hUsed = pUsed;
+	s_UsePortals.nPortals = MIN( portals.Count(), HL2MP_PORTAL_MAX_RECURSION );
+	for ( int i = 0; i < s_UsePortals.nPortals; i++ )
+	{
+		s_UsePortals.hPortals[i] = portals[i];
+	}
+	s_UsePortals.nTick = gpGlobals->tickcount;
+}
+
+int HL2MPPortal_GetUsePortals( CBaseEntity *pUser, CBaseEntity *pUsed, CHL2MPPortal **ppPortals, int nMax )
+{
+	if ( !pUser || s_UsePortals.hUser != pUser || s_UsePortals.nTick != gpGlobals->tickcount )
+		return 0;
+	// The prop used, or the entity it's parented to.
+	if ( !pUsed || ( s_UsePortals.hUsed != pUsed && s_UsePortals.hUsed != pUsed->GetRootMoveParent() ) )
+		return 0;
+
+	int nPortals = MIN( s_UsePortals.nPortals, nMax );
+	for ( int i = 0; i < nPortals; i++ )
+	{
+		ppPortals[i] = s_UsePortals.hPortals[i];
+		if ( !ppPortals[i] || !ppPortals[i]->IsOpen() )
+			return 0;
+	}
+	return nPortals;
+}
+#endif
+
+float UTIL_HL2MPPortal_PathLength( const CUtlVector<Vector> &path )
+{
+	float flLength = 0.0f;
+	for ( int i = 0; i + 1 < path.Count(); i += 2 )
+	{
+		flLength += ( path[i + 1] - path[i] ).Length();
+	}
+	return flLength;
+}
+
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut,
-	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath, ITraceFilter *pFilterAfterPortal )
+	const Vector *pHullMins, const Vector *pHullMaxs, CHL2MPPortal *pIgnorePortal, CUtlVector<Vector> *pPath, ITraceFilter *pFilterAfterPortal,
+	CUtlVector<CHL2MPPortal *> *pPortals )
 {
 	if ( pPath )
 	{
 		pPath->RemoveAll();
+	}
+	if ( pPortals )
+	{
+		pPortals->RemoveAll();
 	}
 
 	Vector vStart = vecStart;
@@ -963,6 +1019,11 @@ int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, flo
 		if ( pPath )
 		{
 			pPath->AddToTail( vHit );
+		}
+
+		if ( pPortals )
+		{
+			pPortals->AddToTail( pPortal );
 		}
 
 		VMatrix matToLinked = pPortal->MatrixThisToLinked();
@@ -1056,6 +1117,7 @@ static void GetPortalEntityVelocity( CBaseEntity *pEntity, Vector *pVelocity, An
 // Keep held objects held through portals (weapon_physcannon.cpp).
 extern bool PhysCannon_GetHeldObjectTarget( CBaseEntity *pObject, Vector *pTarget );
 extern void PhysCannon_HeldObjectWentThroughPortal( CBaseEntity *pObject, CHL2MPPortal *pPortal );
+extern void RPG_MissileWentThroughPortal( CBaseEntity *pEntity, CHL2MPPortal *pPortal );
 extern void PhysCannon_HolderWentThroughPortal( CBasePlayer *pPlayer, CHL2MPPortal *pPortal );
 
 
@@ -1442,6 +1504,7 @@ bool CHL2MPPortal::TeleportEntity( CBaseEntity *pEntity, bool bExact )
 	{
 		// Still held (gravity gun or +use) on the other side.
 		PhysCannon_HeldObjectWentThroughPortal( pEntity, this );
+		RPG_MissileWentThroughPortal( pEntity, this );
 
 		IPhysicsObject *pPhys = pEntity->VPhysicsGetObject();
 		if ( pEntity->GetMoveType() == MOVETYPE_VPHYSICS && pPhys )

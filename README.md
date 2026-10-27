@@ -43,7 +43,9 @@ From source on Linux, one command does it all (fetch SDK, build, package, instal
 | Portal gun shots | Go through existing portals too, so you can place a portal through a portal |
 | SLAM tripmine laser | Beam continues through portals (drawn on every segment). Anyone crossing any segment trips it; opening, closing or moving a portal on its path trips it too |
 
-Props you're holding (gravity gun or `+use`) stay held through portals, from either side. Walk into a wall or floor
+Props you're holding (gravity gun or `+use`) stay held through portals, from either side. You can also reach through a
+portal: `+use`, gravity gun pickup / pull / punt, SLAM placement, the RPG laser (rockets follow it through) and player
+names all work on what you see through one. Walk into a wall or floor
 portal and you go through in one smooth move (no snap) when your eye crosses it; a little off-center, you slide into line
 with the hole on the way in (funneling). Melee weapons (crowbar, stunstick) reach through portals too, and so do
 explosions. A portal whose exit is blocked (something solid right in front of the other one) is just a wall or floor. Props with

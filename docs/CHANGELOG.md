@@ -11,6 +11,10 @@
   first when it's closed.
 
 ### Added
+- **Interact through portals.** `+use` (buttons, chargers, picking things up), gravity gun pickup, pull and punt,
+  SLAM placement, the RPG laser dot (rockets follow it through the portals) and player names now work on things seen
+  through a portal. Self-tests: `gravgun_pickup_through_portal`, `gravgun_punt_through_portal`,
+  `use_pickup_through_portal`.
 - Self-tests `gravgun_hold_steady` and `gravgun_hold_through_portal_steady`: hold a box with the gravity gun, away from
   and through a portal, and measure how much it shakes.
 

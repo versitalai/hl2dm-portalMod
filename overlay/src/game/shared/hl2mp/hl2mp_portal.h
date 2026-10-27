@@ -208,11 +208,22 @@ private:
 // the final segment (startpos is where it left the last portal), *pVecDirOut
 // the final direction. *pPath gets each segment as a start/end pair.
 // pFilterAfterPortal, if given, replaces pFilter once the ray has gone through
-// a portal (bullets can hit their shooter on the way back out).
+// a portal (bullets can hit their shooter on the way back out). *pPortals
+// gets the portals entered, in order.
 int UTIL_HL2MPPortal_TraceRay( const Vector &vecStart, const Vector &vecDir, float flDist,
 	unsigned int mask, ITraceFilter *pFilter, trace_t *pTrace, Vector *pVecDirOut = NULL,
 	const Vector *pHullMins = NULL, const Vector *pHullMaxs = NULL, CHL2MPPortal *pIgnorePortal = NULL,
-	CUtlVector<Vector> *pPath = NULL, ITraceFilter *pFilterAfterPortal = NULL );
+	CUtlVector<Vector> *pPath = NULL, ITraceFilter *pFilterAfterPortal = NULL, CUtlVector<CHL2MPPortal *> *pPortals = NULL );
+
+// Length of a path from UTIL_HL2MPPortal_TraceRay (sum of its segments).
+float UTIL_HL2MPPortal_PathLength( const CUtlVector<Vector> &path );
+
+#ifdef GAME_DLL
+// +use through portals: FindUseEntity notes the portals it saw pUsed through,
+// and picking pUsed up (in the same +use) holds it through them.
+void HL2MPPortal_SetUsePortals( CBaseEntity *pUser, CBaseEntity *pUsed, const CUtlVector<CHL2MPPortal *> &portals );
+int HL2MPPortal_GetUsePortals( CBaseEntity *pUser, CBaseEntity *pUsed, CHL2MPPortal **ppPortals, int nMax );
+#endif
 
 // Player movement through portals. Shared so client prediction matches the
 // server. Trace a player hull that may be partly inside an open portal's hole:
