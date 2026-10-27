@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.3 — Unreleased
+
+### Fixed
+- **Gravity gun: held object slid nearer and farther while you turned.** The hold distance used the object's current
+  angles; those lag behind while you turn, so its depth along your aim (corner-on vs face-on) kept changing. It now
+  uses the angles it's being turned to.
+- **Held object glitching while hovered inside a portal.** It went across (and back) when the hold point was 2 units
+  past the plane, so a hold point wobbling at the plane flipped it between the portals. Now 8 units each way.
+- **Portal Settings still too big.** It used the main menu's proportional fonts (which grow with the screen); it now
+  uses the same fonts as the game's Options dialogs.
+
 ## 0.5.2 — 2026-10-27
 
 ### Fixed

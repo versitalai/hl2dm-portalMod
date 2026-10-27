@@ -75,6 +75,9 @@ public:
 		SetSizeable( false );
 		SetMoveable( true );
 		SetDeleteSelfOnClose( false );
+		// Like the game's own Options dialogs: fonts that step up with the
+		// resolution, not the main menu's proportional ones that grow with it.
+		SetProportional( false );
 		m_bLoading = false;
 		m_flAvgFrameTime = 0.0f;
 
@@ -195,7 +198,7 @@ public:
 		BaseClass::PerformLayout();
 
 		IScheme *pScheme = scheme()->GetIScheme( GetScheme() );
-		HFont hFont = pScheme ? pScheme->GetFont( "Default", IsProportional() ) : INVALID_FONT;
+		HFont hFont = pScheme ? pScheme->GetFont( "Default", false ) : INVALID_FONT;
 		int nLine = ( hFont != INVALID_FONT ) ? surface()->GetFontTall( hFont ) : 14;
 		nLine = MAX( nLine, 10 );
 		int nChar = ( hFont != INVALID_FONT ) ? surface()->GetCharacterWidth( hFont, 'n' ) : 7;
@@ -205,7 +208,7 @@ public:
 		surface()->GetScreenSize( nScreenWide, nScreenTall );
 
 		int nMargin = nLine;
-		int nWide = MIN( nChar * 78, nScreenWide * 9 / 10 );
+		int nWide = MIN( nChar * 72, nScreenWide * 9 / 10 );
 		int nInner = nWide - 2 * nMargin;
 		int nRow = nLine * 3 / 2 + 4;
 		int nIndent = nLine;
