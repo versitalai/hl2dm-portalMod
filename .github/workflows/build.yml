@@ -7,7 +7,10 @@ on:
   push:
     branches: ['**']
     tags: ['v*']
+    # Docs-only pushes don't build (releases are started by hand or by a tag).
+    paths-ignore: ['docs/**', '**.md']
   pull_request:
+    paths-ignore: ['docs/**', '**.md']
   workflow_dispatch:
     inputs:
       release_tag:
@@ -27,9 +30,31 @@ jobs:
       - uses: actions/checkout@v4
       - name: Fetch SDK and apply mod
         run: scripts/setup.sh
+      # Compiler cache: most of the tree is the unchanged SDK, so a push only
+      # really compiles the files it touched. The ninja rules call
+      # x86_64-linux-gnu-g++ by name; a ccache link with that name goes first
+      # in PATH. The SDK is fetched fresh each run (new mtimes), hence the
+      # sloppiness settings.
+      - uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-linux-${{ github.sha }}
+          restore-keys: ccache-linux-
+      - name: Set up ccache
+        run: |
+          command -v ccache || { apt-get update -qq && apt-get install -y -qq ccache; }
+          mkdir -p "$GITHUB_WORKSPACE/.ccache-bin"
+          ln -sf "$(command -v ccache)" "$GITHUB_WORKSPACE/.ccache-bin/x86_64-linux-gnu-g++"
+          echo "$GITHUB_WORKSPACE/.ccache-bin" >> "$GITHUB_PATH"
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          echo "CCACHE_SLOPPINESS=pch_defines,time_macros,include_file_mtime,include_file_ctime" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=2G" >> "$GITHUB_ENV"
+          ccache --zero-stats || true
       - name: Build
         run: |
           scripts/build_linux.sh
+          ccache --show-stats || true
           # 64-bit dedicated server launcher for the server kit.
           cc -O2 -o sdk/game/mod_hl2mp/bin/linux64/srcds_portal64 packaging/server/srcds_portal64.c -ldl
       - name: Unit tests (portal math, hole carving)
@@ -83,6 +108,17 @@ jobs:
         with:
           name: bin-linux64
           path: bin-linux64
+      # The HL2DM dedicated server (~930 MB) is cached; steamcmd then only
+      # checks it's current. Saved right after install, before the mod goes in.
+      - name: Cache key (week)
+        id: week
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        id: srcds-cache
+        with:
+          path: ~/srcds
+          key: hl2dm-srcds-${{ steps.week.outputs.week }}
+          restore-keys: hl2dm-srcds-
       - name: Install dedicated server
         run: |
           sudo dpkg --add-architecture i386
@@ -90,11 +126,19 @@ jobs:
           sudo apt-get install -y -qq lib32gcc-s1 lib32stdc++6 gdb > /dev/null
           mkdir -p ~/steamcmd && cd ~/steamcmd
           curl -sSL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz | tar xz
+          # A cached install only needs an update check; a fresh one is verified.
+          VALIDATE=validate
+          [[ "${{ steps.srcds-cache.outputs.cache-matched-key }}" != "" ]] && VALIDATE=
           # First run updates steamcmd itself and can exit non-zero; retry.
           for i in 1 2 3; do
-            ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 232370 validate +quit && break
+            ./steamcmd.sh +force_install_dir "$HOME/srcds" +login anonymous +app_update 232370 $VALIDATE +quit && break
           done
           ls "$HOME/srcds"
+      - uses: actions/cache/save@v4
+        if: steps.srcds-cache.outputs.cache-hit != 'true'
+        with:
+          path: ~/srcds
+          key: hl2dm-srcds-${{ steps.week.outputs.week }}
       - name: Package
         run: |
           scripts/setup.sh
