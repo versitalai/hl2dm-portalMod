@@ -99,8 +99,15 @@ local collision world, built on demand on client and server alike and rebuilt wh
   the cutter takes any convex prism, so an ellipse polygon can be used for props later.
 - **Other side:** brushes in the front half of the linked portal's region, mapped in behind this plane
   (`linked->MatrixThisToLinked()`).
-- Static props (their vcollides) and displacements of both regions, uncut. The pieces are grouped by brush contents
+- Static props (their vcollides) and displacements of both regions, uncut. The brush pieces are grouped by contents
   (solid, player clip, grate...) into one `CPhysCollide` each, traced with `physcollision->TraceBox`.
+- **Sides:** brush pieces are exact (the hole cut, the other side clipped at the plane). Uncut collides can reach
+  through the plane: the other side's static prop pushed into its wall would stick out in front of this portal. So
+  each collide has a side (`PORTAL_WORLD_SIDE_*`): this side's uncut ones are traced only with the part of the hull in
+  front of the plane, the other side's only with the part behind it (the box clipped on the normal's axis for the
+  whole sweep). The prop collider can't clip shapes, so it leaves out uncut collides that reach where they don't
+  belong (this side's into the hole, the other side's in front of the plane); if it has to leave one out, props pop
+  through instead of sliding (`HL2MPPortalWorld_PropsCanCross`). `sv_portal_world_draw 1` outlines every piece.
 - **Parity:** the client must build the same geometry. Placement snaps the origin to 1/32 unit (what the network sends
   exactly), the angles go out unquantized (`m_angPortal`, used for the frame), and client portals don't interpolate.
   `sv_portal_world_info` / `cl_portal_world_info` print piece counts and a checksum per portal to compare.

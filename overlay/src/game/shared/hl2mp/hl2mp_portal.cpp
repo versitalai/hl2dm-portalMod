@@ -1580,6 +1580,8 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 		return false;
 	if ( !HL2MPPortalWorld_Contains( this, vCenter, vCenter, vHalf ) )
 		return false;
+	if ( !HL2MPPortalWorld_PropsCanCross( this ) || !HL2MPPortalWorld_PropsCanCross( GetLinkedPortal() ) )
+		return false;
 	return HL2MPPortalWorld_SyncCollider( this ) > 0 && HL2MPPortalWorld_SyncCollider( GetLinkedPortal() ) > 0;
 }
 
