@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.8 — Unreleased
+## 0.5.8 — 2026-10-28
 
 ### Fixed
 - **Map geometry missing through a portal (culled by the engine).** The client only draws the map areas connected to
