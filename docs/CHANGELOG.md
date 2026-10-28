@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.7 — Unreleased
+## 0.5.7 — 2026-10-28
 
 ### Changed
 - `sv_portal_smooth_debug 1` now says by how much a prop misses the hole when it pops through as "doesn't fit the hole":
