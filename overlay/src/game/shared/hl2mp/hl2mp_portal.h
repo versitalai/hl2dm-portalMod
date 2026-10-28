@@ -25,6 +25,7 @@
 #endif
 
 class CHL2MPPortalWorld;	// hl2mp_portal_world.cpp
+class CFuncAreaPortalBase;	// server: func_areaportalbase.h
 
 // Half extents of the portal ellipse (local right / local up).
 #define HL2MP_PORTAL_HALF_WIDTH		32.0f
@@ -148,6 +149,13 @@ public:
 
 	// Add the far sides of portals the viewer can see to the PVS.
 	static void		AddPortalsToPVS( unsigned char *pvs, int pvssize );
+
+	// The same for the map's areas: the client only draws areas connected to
+	// the player's own, so the areas seen out of a portal's exit are added to
+	// the area bits sent to it (after the player's own are set), and fading
+	// area portals near an exit that a viewer can see stay open.
+	static void		AddPortalViewAreaBits( CBasePlayer *pPlayer, unsigned char *pvs, int pvssize );
+	static int		TestAreaPortalVisibilityThroughPortals( CFuncAreaPortalBase *pAreaPortal, unsigned char *pvs, int pvssize );
 
 	// Recent teleports, newest last (for sv_portal_selftest and debugging).
 	static bool		WasTeleported( CBaseEntity *pEntity );
