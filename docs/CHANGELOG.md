@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.8 — 2026-10-28
+
+### Fixed
+- **Map geometry missing through a portal (culled by the engine).** The client only draws the map areas connected to
+  the one the player's eye is in (the "area bits" the server sends). Portal exits were added to the PVS (so
+  entities showed) but their area never was, so when an exit was in another area (rooms split by area portals, doors,
+  windows) the walls and floors there weren't drawn in the portal view. The server now ORs the areas connected to each
+  seen portal's exit into the area bits, after the eye's own are set, and keeps fading area portals next to an exit
+  open (ports of the `#ifdef PORTAL` blocks in `CServerGameClients::ClientSetupVisibility`). `sv_portal_area_bits 0`
+  turns it off. **Not verified in game or by the self-test** (area bits are not observable there).
+
 ## 0.5.7 — 2026-10-28
 
 ### Changed

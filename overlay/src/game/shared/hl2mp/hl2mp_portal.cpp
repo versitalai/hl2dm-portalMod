@@ -22,6 +22,8 @@
 	#include "model_types.h"
 #else
 	#include "world.h"
+	#include "player.h"
+	#include "func_areaportalbase.h"
 	#include "vphysics/player_controller.h"
 	#include "physics_shared.h"
 	#include "igamesystem.h"
@@ -1946,6 +1948,73 @@ void CHL2MPPortal::AddPortalsToPVS( unsigned char *pvs, int pvssize )
 		CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
 		engine->AddOriginToPVS( pLinked->GetAbsOrigin() + pLinked->GetSurfaceNormal() * 4.0f );
 	}
+}
+
+// Without this the exit's entities are sent but the map around it isn't drawn
+// when the exit is in another area (rooms split by area portals): the client
+// only draws the areas connected to the one the player's eye is in.
+static ConVar sv_portal_area_bits( "sv_portal_area_bits", "1", FCVAR_NONE, "Send the client the map areas seen through portals, so geometry at an exit in another area isn't culled (0 = only the eye's own areas)." );
+
+void CHL2MPPortal::AddPortalViewAreaBits( CBasePlayer *pPlayer, unsigned char *pvs, int pvssize )
+{
+	if ( !pPlayer || !sv_portal_area_bits.GetBool() )
+		return;
+
+	for ( int i = 0; i < s_HL2MPPortals.Count(); i++ )
+	{
+		CHL2MPPortal *pPortal = s_HL2MPPortals[i];
+		CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
+		if ( !pPortal->IsOpen() || !pLinked || !pLinked->IsOpen() )
+			continue;
+
+		// Only portals the viewer can see (as in AddPortalsToPVS).
+		if ( !engine->CheckOriginInPVS( pPortal->GetAbsOrigin() + pPortal->GetSurfaceNormal() * 4.0f, pvs, pvssize ) )
+			continue;
+
+		// The areas connected to the exit's, added to the eye's own.
+		int iArea = engine->GetArea( pLinked->GetAbsOrigin() + pLinked->GetSurfaceNormal() * 4.0f );
+		if ( iArea <= 0 )
+			continue;
+
+		unsigned char exitBits[32];
+		COMPILE_TIME_ASSERT( sizeof( exitBits ) >= sizeof( ((CPlayerLocalData *)0)->m_chAreaBits ) );
+		engine->GetAreaBits( iArea, exitBits, sizeof( exitBits ) );
+		for ( int j = 0; j < pPlayer->m_Local.m_chAreaBits.Count(); j++ )
+		{
+			unsigned char nBits = pPlayer->m_Local.m_chAreaBits[j];
+			if ( ( nBits | exitBits[j] ) != nBits )
+			{
+				pPlayer->m_Local.m_chAreaBits.Set( j, nBits | exitBits[j] );
+			}
+		}
+	}
+}
+
+// Area portals (doors, windows) can fade shut when the viewer is far from them,
+// which cuts the map off at a distant exit. Keep one open if a viewer who can
+// see a portal would look out of one next to it.
+int CHL2MPPortal::TestAreaPortalVisibilityThroughPortals( CFuncAreaPortalBase *pAreaPortal, unsigned char *pvs, int pvssize )
+{
+	if ( !sv_portal_area_bits.GetBool() )
+		return 0;
+
+	for ( int i = 0; i < s_HL2MPPortals.Count(); i++ )
+	{
+		CHL2MPPortal *pPortal = s_HL2MPPortals[i];
+		CHL2MPPortal *pLinked = pPortal->GetLinkedPortal();
+		if ( !pPortal->IsOpen() || !pLinked || !pLinked->IsOpen() )
+			continue;
+
+		// The viewer sees the linked portal, so what's around this one is visible.
+		if ( !engine->CheckOriginInPVS( pLinked->GetAbsOrigin() + pLinked->GetSurfaceNormal() * 4.0f, pvs, pvssize ) )
+			continue;
+
+		bool bIsOpenOnClient = true;
+		int iOpen = pAreaPortal->UpdateVisibility( pPortal->GetAbsOrigin(), 1.0f, bIsOpenOnClient );
+		if ( iOpen )
+			return iOpen;
+	}
+	return 0;
 }
 
 static ConVar sv_portal_soundscape_hold( "sv_portal_soundscape_hold", "2", FCVAR_NONE, "Seconds a player's soundscape stays as it was after going through a portal (0 = switch right away)." );
