@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.6 — 2026-10-28
+
+### Fixed
+- **Prop jumping ahead in the middle of a portal crossing.** When the server swaps a sliding prop to the exit
+  portal it marks it "don't interpolate", and the engine answers by dropping the prop's older positions, snapping it
+  to its newest one at once instead of ~100 ms later (speed × interpolation delay of a jump). The client now maps the
+  older positions through the portal (`CarryInterpolationThroughPortal`, `cl_portal_carry_interp`, default 1), so
+  smoothing continues across the swap. A swap is told from an ordinary teleport by the older position being far from
+  the newer one but close to it once mapped through a portal. **Unverified:** assumes the clone system's `Update` runs
+  before `OnRenderStart`; if not, this does nothing and behavior is as in 0.5.5.
+
+### Added
+- `sv_portal_smooth_debug 1` prints why a prop about to cross popped through whole instead of sliding (too big for the
+  hole, no room at the exit, outside the local world, resting on a wall portal, ragdoll/frozen, ...).
+
+### Open
+- Choppy prop or copy while sliding: no cause found without play-test data; not changed.
+
 ## 0.5.5 — 2026-10-27
 
 ### Fixed

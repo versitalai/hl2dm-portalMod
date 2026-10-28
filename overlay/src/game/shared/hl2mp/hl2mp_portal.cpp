@@ -1725,17 +1725,29 @@ static void RecheckCollisions( CBaseEntity *pEntity )
 	}
 }
 
+ConVar sv_portal_smooth_debug( "sv_portal_smooth_debug", "0", FCVAR_NONE, "Print why a physics prop popped through a portal instead of sliding." );
+
+// Says why a prop that was about to cross didn't slide (sv_portal_smooth_debug).
+static bool NoSmoothCrossing( CBaseEntity *pEntity, const char *pszReason )
+{
+	if ( sv_portal_smooth_debug.GetBool() && !pEntity->IsPlayer() )
+	{
+		Msg( "PORTAL smooth: %s (#%d) pops through: %s\n", pEntity->GetClassname(), pEntity->entindex(), pszReason );
+	}
+	return false;
+}
+
 bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 {
 	if ( !sv_portal_smooth_props.GetBool() || !sv_portal_local_world.GetBool() || !CanCarve() || IsCrossing( pEntity ) )
-		return false;
+		return NoSmoothCrossing( pEntity, "smooth props or local world is off, the portal is slanted, or it's already crossing" );
 	if ( pEntity->IsPlayer() || pEntity->GetMoveType() != MOVETYPE_VPHYSICS )
-		return false;
+		return NoSmoothCrossing( pEntity, "not a physics prop" );
 
 	// One rigid body (not a ragdoll), free to move.
 	IPhysicsObject *pList[2];
 	if ( pEntity->VPhysicsGetObjectList( pList, ARRAYSIZE( pList ) ) != 1 || !pList[0]->IsMoveable() )
-		return false;
+		return NoSmoothCrossing( pEntity, "ragdoll, several bodies, or frozen" );
 
 	// Heading in (or lying on a floor portal, which gravity pulls it into).
 	// Something just resting against a wall portal pops through as before.
@@ -1747,7 +1759,7 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	pList[0]->GetVelocity( &vVelocity, &angVelocity );
 	bool bHeld = ( pList[0]->GetGameFlags() & FVPHYSICS_PLAYER_HELD ) != 0;
 	if ( !bHeld && DotProduct( vVelocity, vForward ) > -1.0f && vForward.z < 0.7f )
-		return false;
+		return NoSmoothCrossing( pEntity, "resting against a wall portal, not heading in" );
 
 	// Its cross-section fits the hole, there's room for it out of the other
 	// portal, and it's inside what the local worlds of both portals cover.
@@ -1755,11 +1767,15 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	pEntity->CollisionProp()->WorldSpaceAABB( &vMins, &vMaxs );
 	Vector vCenter = ( vMins + vMaxs ) * 0.5f;
 	Vector vHalf = ( vMaxs - vMins ) * 0.5f;
-	if ( !HullFitsHole( vCenter, vHalf ) || !GetLinkedPortal()->HasRoomForHull( -vHalf, vHalf, pEntity ) )
-		return false;
+	if ( !HullFitsHole( vCenter, vHalf ) )
+		return NoSmoothCrossing( pEntity, "too big for the hole" );
+	if ( !GetLinkedPortal()->HasRoomForHull( -vHalf, vHalf, pEntity ) )
+		return NoSmoothCrossing( pEntity, "no room out of the other portal" );
 	if ( !HL2MPPortalWorld_Contains( this, vCenter, vCenter, vHalf ) )
-		return false;
-	return HL2MPPortalWorld_SyncCollider( this ) > 0 && HL2MPPortalWorld_SyncCollider( GetLinkedPortal() ) > 0;
+		return NoSmoothCrossing( pEntity, "outside the portal's local world" );
+	if ( HL2MPPortalWorld_SyncCollider( this ) <= 0 || HL2MPPortalWorld_SyncCollider( GetLinkedPortal() ) <= 0 )
+		return NoSmoothCrossing( pEntity, "a portal has no local world collider" );
+	return true;
 }
 
 void CHL2MPPortal::StartCrossing( CBaseEntity *pEntity )
@@ -2442,6 +2458,82 @@ static bool PropStraddlesPortal( C_BaseEntity *pEntity, C_HL2MPPortal *pPortal, 
 	return pPortal->IsPointInEllipse( vCenter - vForward * flDist, 1.2f );
 }
 
+ConVar cl_portal_carry_interp( "cl_portal_carry_interp", "1", FCVAR_NONE, "Carry a prop's smoothing through the portal when the server swaps it to the other side (0 = it jumps ahead at the swap)." );
+
+// The server swapped the prop to the other portal (same moment, same pose, in
+// the exit's frame) and marked it "don't interpolate". The engine answers by
+// throwing away the older positions, which snaps the prop to its newest one
+// right away instead of when it's due: it jumps ahead by the speed times the
+// interpolation delay, in the middle of the crossing. Instead, map the older
+// positions through the portal so smoothing carries on across the swap.
+// A swap is told from any other teleport by the older position being far from
+// the newer one but close to it once mapped through a portal.
+static void CarryInterpolationThroughPortal( C_BaseEntity *pEntity )
+{
+	if ( !cl_portal_carry_interp.GetBool() || !pEntity->IsNoInterpolationFrame() )
+		return;
+
+	CInterpolatedVar<Vector> &ivOrigin = pEntity->GetOriginInterpolator();
+	CInterpolatedVar<QAngle> &ivAngles = pEntity->GetRotationInterpolator();
+
+	for ( int iNewer = ivOrigin.GetHead(); ivOrigin.IsValidIndex( iNewer ); iNewer = ivOrigin.GetNext( iNewer ) )
+	{
+		int iOlder = ivOrigin.GetNext( iNewer );
+		if ( !ivOrigin.IsValidIndex( iOlder ) )
+			break;
+
+		float flNewerTime, flOlderTime;
+		Vector vNewer = *ivOrigin.GetHistoryValue( iNewer, flNewerTime );
+		Vector vOlder = *ivOrigin.GetHistoryValue( iOlder, flOlderTime );
+		if ( flNewerTime == 0.0f || flOlderTime == 0.0f )
+			break;
+
+		C_HL2MPPortal *pBest = NULL;
+		float flBest = FLT_MAX;
+		for ( int i = 0; i < CHL2MPPortal::GetPortalCount(); i++ )
+		{
+			C_HL2MPPortal *pPortal = CHL2MPPortal::GetPortal( i );
+			if ( pPortal->IsDormant() || !pPortal->IsOpen() || !pPortal->CanCarve() )
+				continue;
+			float flMapped = pPortal->MatrixThisToLinked().VMul4x3( vOlder ).DistTo( vNewer );
+			if ( flMapped < flBest )
+			{
+				flBest = flMapped;
+				pBest = pPortal;
+			}
+		}
+
+		// Not a swap through a portal (or the portals are so close it doesn't matter).
+		if ( !pBest || flBest > 96.0f || vOlder.DistTo( vNewer ) < flBest * 2.0f + 32.0f )
+			continue;
+
+		VMatrix matMap = pBest->MatrixThisToLinked();
+		for ( int i = iOlder; ivOrigin.IsValidIndex( i ); i = ivOrigin.GetNext( i ) )
+		{
+			float flTime;
+			Vector *pOrigin = ivOrigin.GetHistoryValue( i, flTime );
+			if ( flTime == 0.0f )
+				break;
+			*pOrigin = matMap.VMul4x3( *pOrigin );
+
+			// The angles are noted at the same moments as the origin.
+			float flAngleTime;
+			QAngle *pAngles = ivAngles.IsValidIndex( i ) ? ivAngles.GetHistoryValue( i, flAngleTime ) : NULL;
+			if ( pAngles && fabsf( flAngleTime - flTime ) < 0.0001f )
+			{
+				matrix3x4_t matOld, matNew;
+				AngleMatrix( *pAngles, matOld );
+				ConcatTransforms( matMap.As3x4(), matOld, matNew );
+				MatrixAngles( matNew, *pAngles );
+			}
+		}
+
+		// Smoothing carries on: nothing to reset.
+		pEntity->m_ubOldInterpolationFrame = pEntity->m_ubInterpolationFrame;
+		return;
+	}
+}
+
 class C_HL2MPPortalPropClone : public C_BaseAnimating
 {
 public:
@@ -2537,6 +2629,8 @@ public:
 				if ( pEntity->GetMoveType() != MOVETYPE_VPHYSICS || pEntity->IsPlayer() || pEntity->IsDormant() || !pEntity->GetModel() ||
 					modelinfo->GetModelType( pEntity->GetModel() ) != mod_studio )
 					continue;
+
+				CarryInterpolationThroughPortal( pEntity );
 
 				for ( int i = 0; i < CHL2MPPortal::GetPortalCount(); i++ )
 				{
