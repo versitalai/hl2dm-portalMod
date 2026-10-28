@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.7 — 2026-10-28
+
+### Changed
+- `sv_portal_smooth_debug 1` now says by how much a prop misses the hole when it pops through as "doesn't fit the hole":
+  the box's half size and how far its edge reaches across and up from the portal center, against the hole's 32 x 56.
+  Small props reported as "too big" are either a much bigger box than the model or off to one side of the hole; the
+  numbers tell which. No behavior change.
+
 ## 0.5.6 — 2026-10-28
 
 ### Fixed

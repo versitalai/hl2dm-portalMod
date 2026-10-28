@@ -1768,7 +1768,25 @@ bool CHL2MPPortal::CanCrossSmoothly( CBaseEntity *pEntity )
 	Vector vCenter = ( vMins + vMaxs ) * 0.5f;
 	Vector vHalf = ( vMaxs - vMins ) * 0.5f;
 	if ( !HullFitsHole( vCenter, vHalf ) )
-		return NoSmoothCrossing( pEntity, "too big for the hole" );
+	{
+		// Say by how much, so "too big" can be told from "off to one side".
+		char szReason[192] = "too big for the hole";
+		int k;
+		float flSign, flDist;
+		if ( sv_portal_smooth_debug.GetBool() && GetPlaneAxis( &k, &flSign, &flDist ) )
+		{
+			Vector vRight, vUp;
+			GetPortalVectors( NULL, &vRight, &vUp );
+			Vector vPlanarHalf = vHalf;
+			vPlanarHalf[k] = 0.0f;
+			Vector vDelta = vCenter - GetAbsOrigin();
+			Q_snprintf( szReason, sizeof( szReason ), "doesn't fit the hole: box half %.0f x %.0f x %.0f, its edge reaches %.0f across and %.0f up from the portal center (hole: %.0f across, %.0f up)",
+				vHalf.x, vHalf.y, vHalf.z,
+				fabs( DotProduct( vDelta, vRight ) ) + BoxSupport( vPlanarHalf, vRight ), fabs( DotProduct( vDelta, vUp ) ) + BoxSupport( vPlanarHalf, vUp ),
+				HL2MP_PORTAL_HALF_WIDTH, HL2MP_PORTAL_HALF_HEIGHT );
+		}
+		return NoSmoothCrossing( pEntity, szReason );
+	}
 	if ( !GetLinkedPortal()->HasRoomForHull( -vHalf, vHalf, pEntity ) )
 		return NoSmoothCrossing( pEntity, "no room out of the other portal" );
 	if ( !HL2MPPortalWorld_Contains( this, vCenter, vCenter, vHalf ) )
