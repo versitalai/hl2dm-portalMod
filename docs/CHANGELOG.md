@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.6 — Unreleased
+## 0.5.6 — 2026-10-28
 
 ### Fixed
 - **Prop jumping ahead in the middle of a portal crossing.** When the server swaps a sliding prop to the exit
