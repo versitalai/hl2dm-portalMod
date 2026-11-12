@@ -733,10 +733,21 @@ index 052e3a7..40e9f1d 100644
  						int x, int y, int width, int height );
  
 diff --git a/src/game/server/gameinterface.cpp b/src/game/server/gameinterface.cpp
-index eb99cdf..9a8bb03 100644
+index eb99cdf..657080c 100644
 --- a/src/game/server/gameinterface.cpp
 +++ b/src/game/server/gameinterface.cpp
-@@ -1880,6 +1880,9 @@ IServerGCLobby *CServerGameDLL::GetServerGCLobby()
+@@ -125,6 +125,10 @@ extern ConVar tf_mm_servermode;
+ #include "portal_player.h"
+ #endif
+ 
++#ifdef HL2MP
++#include "hl2mp_portal.h"
++#endif
++
+ #if defined( REPLAY_ENABLED )
+ #include "replay/ireplaysystem.h"
+ #endif
+@@ -1880,6 +1884,9 @@ IServerGCLobby *CServerGameDLL::GetServerGCLobby()
  {
  #ifdef TF_DLL
  	return GTFGCClientSystem();
@@ -746,6 +757,33 @@ index eb99cdf..9a8bb03 100644
  #else	
  	return NULL;
  #endif
+@@ -2970,6 +2977,14 @@ void CServerGameClients::ClientSetupVisibility( edict_t *pViewEntity, edict_t *p
+ 		}
+ #endif
+ 
++#ifdef HL2MP
++		// Same for portals: keep it open when it's next to the far side of a portal the viewer can see.
++		if ( isOpen[iOutPortal] == 0 )
++		{
++			isOpen[iOutPortal] = CHL2MPPortal::TestAreaPortalVisibilityThroughPortals( pCur, pvs, pvssize );
++		}
++#endif
++
+ 		++iOutPortal;
+ 		if ( iOutPortal >= ARRAYSIZE( portalNums ) )
+ 		{
+@@ -3009,6 +3024,11 @@ void CServerGameClients::ClientSetupVisibility( edict_t *pViewEntity, edict_t *p
+ 			pPortalPlayer->UpdatePortalViewAreaBits( pvs, pvssize );
+ 		}
+ #endif //PORTAL
++
++#ifdef HL2MP
++		// *After* the eye's own area bits: add the areas seen out of portal exits
++		CHL2MPPortal::AddPortalViewAreaBits( pPlayer, pvs, pvssize );
++#endif
+ 	}
+ }
+ 
 diff --git a/src/game/server/hl2mp/grenade_tripmine.cpp b/src/game/server/hl2mp/grenade_tripmine.cpp
 index e14a929..c9e3fb6 100644
 --- a/src/game/server/hl2mp/grenade_tripmine.cpp

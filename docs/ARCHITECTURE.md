@@ -258,6 +258,9 @@ Classic render-to-texture portal, done with stock SDK pieces (no custom shaders,
    because the rasterizer interpolates UVs perspective-correctly, not linearly in screen space.
 6. **Server side of it**: `CHL2MP_Player::SetupVisibility` adds the exit side of every open portal in the player's PVS,
    so entities over there are networked and actually show up in the view.
+   It also ORs the exit's connected map areas into the area bits sent to the client (`AddPortalViewAreaBits`, called
+   from `CServerGameClients::ClientSetupVisibility` after the eye's own bits): the client only draws areas connected to
+   the eye's, so without it an exit in another area has its entities but no walls (`sv_portal_area_bits`).
 
 Views run every frame, so what you see through a portal is live. `DrawHL2MPPortalViews` bumps the view stamps at
 the start of every frame, so a portal whose view wasn't rendered this frame draws solid rather than a stale image.

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.6 — 2026-11-12
+## 0.5.9 — 2026-11-12
 
 ### Fixed
 - **Portals out of bounds.** The portal gun's shot passes through player clip (the invisible walls maps use to keep
@@ -8,6 +8,43 @@
   where player clip is right in front of its hole, and on tool textures (nodraw, hint, skip, trigger).
   `sv_portal_allow_out_of_bounds 1` turns the check off. Spots that are only fenced off by height or distance (no
   clip brush) can't be detected this way.
+
+## 0.5.8 — 2026-10-28
+
+### Fixed
+- **Map geometry missing through a portal (culled by the engine).** The client only draws the map areas connected to
+  the one the player's eye is in (the "area bits" the server sends). Portal exits were added to the PVS (so
+  entities showed) but their area never was, so when an exit was in another area (rooms split by area portals, doors,
+  windows) the walls and floors there weren't drawn in the portal view. The server now ORs the areas connected to each
+  seen portal's exit into the area bits, after the eye's own are set, and keeps fading area portals next to an exit
+  open (ports of the `#ifdef PORTAL` blocks in `CServerGameClients::ClientSetupVisibility`). `sv_portal_area_bits 0`
+  turns it off. **Not verified in game or by the self-test** (area bits are not observable there).
+
+## 0.5.7 — 2026-10-28
+
+### Changed
+- `sv_portal_smooth_debug 1` now says by how much a prop misses the hole when it pops through as "doesn't fit the hole":
+  the box's half size and how far its edge reaches across and up from the portal center, against the hole's 32 x 56.
+  Small props reported as "too big" are either a much bigger box than the model or off to one side of the hole; the
+  numbers tell which. No behavior change.
+
+## 0.5.6 — 2026-10-28
+
+### Fixed
+- **Prop jumping ahead in the middle of a portal crossing.** When the server swaps a sliding prop to the exit
+  portal it marks it "don't interpolate", and the engine answers by dropping the prop's older positions, snapping it
+  to its newest one at once instead of ~100 ms later (speed × interpolation delay of a jump). The client now maps the
+  older positions through the portal (`CarryInterpolationThroughPortal`, `cl_portal_carry_interp`, default 1), so
+  smoothing continues across the swap. A swap is told from an ordinary teleport by the older position being far from
+  the newer one but close to it once mapped through a portal. **Unverified:** assumes the clone system's `Update` runs
+  before `OnRenderStart`; if not, this does nothing and behavior is as in 0.5.5.
+
+### Added
+- `sv_portal_smooth_debug 1` prints why a prop about to cross popped through whole instead of sliding (too big for the
+  hole, no room at the exit, outside the local world, resting on a wall portal, ragdoll/frozen, ...).
+
+### Open
+- Choppy prop or copy while sliding: no cause found without play-test data; not changed.
 
 ## 0.5.5 — 2026-10-27
 
