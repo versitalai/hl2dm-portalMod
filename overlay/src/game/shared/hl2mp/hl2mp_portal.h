@@ -116,6 +116,8 @@ public:
 	// Place the portal; returns false if it doesn't fit on the surface.
 	bool			PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal, const Vector &vViewForward );
 	void			Fizzle( void );
+	// Players may be in front of a portal placed here (no player clip in the way).
+	bool			IsPlayerReachableSpot( const Vector &vCenter, const QAngle &angPortal ) const;
 #ifdef GAME_DLL
 	// This portal is about to close or move: players part way into its hole
 	// (and its partner's too, if bLinked: closing shuts both) are moved out

@@ -37,6 +37,8 @@
 ConVar sv_portal_debug( "sv_portal_debug", "0", FCVAR_CHEAT, "Draw portal teleport volumes and placement traces." );
 ConVar sv_portal_lookahead( "sv_portal_lookahead", "3", FCVAR_NONE, "How many ticks ahead fast movers are caught before they would hit the portal surface." );
 ConVar sv_portal_smooth_props( "sv_portal_smooth_props", "1", FCVAR_NONE, "Physics props that fit the hole slide through portals (0 = they pop through whole)." );
+ConVar sv_portal_allow_out_of_bounds( "sv_portal_allow_out_of_bounds", "0", FCVAR_REPLICATED | FCVAR_NOTIFY,
+	"Allow portals where players can't go: behind player clip (roofs, outside the map) and on tool textures." );
 ConVar sv_portal_cooldown( "sv_portal_cooldown", "0.05", FCVAR_NONE, "Seconds before an entity that just went through a portal can go through again." );
 #endif
 
@@ -1268,12 +1270,43 @@ bool CHL2MPPortal::PlaceOnSurface( const Vector &vHitPos, const Vector &vNormal,
 	{
 		vCenter[i] = floor( vCenter[i] * 32.0f + 0.5f ) / 32.0f;
 	}
+	// Out of bounds: maps fence off where players mustn't go with player clip,
+	// which the portal gun's shot passes through. A portal whose way out is in
+	// or behind player clip (a roof, outside the map) would let players there.
+	if ( !sv_portal_allow_out_of_bounds.GetBool() && !IsPlayerReachableSpot( vCenter, angPortal ) )
+		return false;
+
 	// Moving away from where they're standing in it. Someone in the other
 	// portal stays: its hole stays open, it just leads somewhere new.
 	FreePlayersInHoles( false );
 	m_angPortal = angPortal;
 	Teleport( &vCenter, &angPortal, NULL );
 	m_bActivated = true;
+	return true;
+}
+
+// Is the space in front of a portal here somewhere players are allowed? No
+// player clip right in front of it (or between its face and where a player
+// coming out would stand).
+bool CHL2MPPortal::IsPlayerReachableSpot( const Vector &vCenter, const QAngle &angPortal ) const
+{
+	Vector vForward, vRight, vUp;
+	AngleVectors( angPortal, &vForward, &vRight, &vUp );
+
+	// Sample the middle and the four sides of the hole, just in front of it,
+	// out to where a player's hull would be.
+	Vector vOffsets[5] = { vec3_origin, vRight * HL2MP_PORTAL_HALF_WIDTH * 0.7f, -vRight * HL2MP_PORTAL_HALF_WIDTH * 0.7f,
+		vUp * HL2MP_PORTAL_HALF_HEIGHT * 0.7f, -vUp * HL2MP_PORTAL_HALF_HEIGHT * 0.7f };
+	for ( int i = 0; i < 5; i++ )
+	{
+		Vector vStart = vCenter + vOffsets[i] + vForward * 1.0f;
+		if ( enginetrace->GetPointContents( vStart ) & CONTENTS_PLAYERCLIP )
+			return false;
+		trace_t tr;
+		UTIL_TraceLine( vStart, vStart + vForward * 40.0f, CONTENTS_PLAYERCLIP, NULL, COLLISION_GROUP_NONE, &tr );
+		if ( tr.fraction < 1.0f || tr.startsolid )
+			return false;
+	}
 	return true;
 }
 

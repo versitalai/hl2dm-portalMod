@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.6 — Unreleased
+
+### Fixed
+- **Portals out of bounds.** The portal gun's shot passes through player clip (the invisible walls maps use to keep
+  players off roofs and out of the void), so portals could be put where players mustn't go. A portal is now refused
+  where player clip is right in front of its hole, and on tool textures (nodraw, hint, skip, trigger).
+  `sv_portal_allow_out_of_bounds 1` turns the check off. Spots that are only fenced off by height or distance (no
+  clip brush) can't be detected this way.
+
 ## 0.5.5 — 2026-10-27
 
 ### Fixed
