@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.6 — Unreleased
+## 0.5.6 — 2026-11-12
 
 ### Fixed
 - **Portals out of bounds.** The portal gun's shot passes through player clip (the invisible walls maps use to keep
