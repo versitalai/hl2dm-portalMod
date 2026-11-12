@@ -186,7 +186,7 @@ void CWeaponPortalGun::FirePortal( int iPortalType )
 	int nPortals = UTIL_HL2MPPortal_TraceRay( vecSrc, vecAim, PORTALGUN_RANGE, MASK_SHOT_PORTAL, &filter, &tr, &vecFinalDir, NULL, NULL, pPortal );
 
 	bool bPlaced = false;
-	if ( tr.fraction < 1.0f && !tr.startsolid && tr.DidHitWorld() && !( tr.surface.flags & ( SURF_SKY | SURF_SKY2D ) ) )
+	if ( tr.fraction < 1.0f && !tr.startsolid && tr.DidHitWorld() && !( tr.surface.flags & ( SURF_SKY | SURF_SKY2D | SURF_NODRAW | SURF_HINT | SURF_SKIP | SURF_TRIGGER ) ) )
 	{
 		bPlaced = pPortal->PlaceOnSurface( tr.endpos, tr.plane.normal, vecFinalDir );
 	}

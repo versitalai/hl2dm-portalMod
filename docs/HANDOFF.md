@@ -80,6 +80,7 @@ Server: `sv_portal_debug`, `sv_portal_lookahead`, `sv_portal_smooth_props`, `sv_
 Client: `cl_portal_quality` (0 off,1 fast,2 balanced,3 best,4 auto), `cl_portal_auto_fps`, `cl_portal_resolution`,
 `cl_portal_max_views`, `cl_portal_recursion`, `cl_portal_scissor`, `cl_portal_render_views`, `cl_portal_draw_local_player`,
 `cl_portal_prop_clones`, `cl_portal_view_ease`, `cl_portal_quality_debug`, `cl_physcannon_predict_held`.
+`sv_portal_allow_out_of_bounds` (0 = refuse portals behind player clip / on tool textures).
 Debug commands: `sv_portal_world_info` / `cl_portal_world_info` (collision world checksums must match).
 
 ## 5. Testing
