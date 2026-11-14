@@ -1,7 +1,9 @@
 # Handoff: everything a new agent/developer needs
 
 Read this first, then `CLAUDE.md`, `docs/ARCHITECTURE.md` (how each system works), `docs/CHANGELOG.md` (why
-each change was made, newest first) and `docs/ROADMAP.md` (known limits). State as of **v0.5.5 (2026-10-28)**.
+each change was made, newest first) and `docs/ROADMAP.md` (known limits). State as of **v0.5.9 (2026-11-12)**; 0.5.6-0.5.9 are in the changelog (sections below predate them).
+The user's dev/play box is **Windows 11** (VS 2022, Steam, HL2DM + SDK Base on `D:\SteamLibrary`, WSL Ubuntu); Linux is
+only a "does it work there" check.
 
 ## 1. What this is
 

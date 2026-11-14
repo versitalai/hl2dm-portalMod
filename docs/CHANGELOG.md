@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.10 — Unreleased
+
+### Fixed
+- **Linux: installed but not in the Steam Library.** `install.sh` took the first Steam folder it found, so with a
+  leftover native folder next to a Flatpak (or the reverse) it installed into the Steam not in use. It also looked
+  for `registry.vdf` next to the Steam folder (it never is), so it always read `~/.steam/registry.vdf`, the native
+  one, even for a Flatpak. It now picks the install that has Source SDK Base 2013 MP (then the one used most
+  recently, by `config/config.vdf`), dedupes symlinks, reads that install's own registry (`~/.steam` or the
+  Flatpak's `~/.var/app/com.valvesoftware.Steam/.steam`), prints which Steam and sourcemods folder it chose, and
+  says to fully quit Steam (it only scans sourcemods at startup). Tested against fake native/Flatpak/symlink layouts.
+
 ## 0.5.9 — 2026-11-12
 
 ### Fixed
